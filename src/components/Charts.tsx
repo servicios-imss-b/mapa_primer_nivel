@@ -14,7 +14,7 @@ import {
   ComposedChart,
   Line,
 } from 'recharts';
-import { Layers3, Building2, X, MapPin, Search } from 'lucide-react';
+import { Layers3, Building2, X, MapPin, Search, Route, Trash2 } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
 import type { DashboardStats, CluesGeoItem, EntidadChart, InternetPieItem, TopFaltanteChart } from '../types';
 
@@ -426,17 +426,38 @@ function normalizeSearch(value: string): string {
 
 type InstitutionFilter = 'IMO' | 'IMB' | 'AMBAS';
 
+interface RouteSummary {
+  distanceKm: number;
+  durationMinutes: number;
+}
+
+interface OsrmRouteResponse {
+  code: string;
+  routes?: Array<{
+    distance: number;
+    duration: number;
+    geometry: {
+      type: 'LineString';
+      coordinates: [number, number][];
+    };
+  }>;
+}
+
 function MapSection({ cluesGeo = [] }: {
   cluesGeo?: CluesGeoItem[];
 }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
   const [institucion, setInstitucion] = useState<InstitutionFilter>('AMBAS');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
-  const unidades = cluesGeo.filter((unit) =>
+  const [routePoints, setRoutePoints] = useState<CluesGeoItem[]>([]);
+  const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
+  const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const unidades = useMemo(() => cluesGeo.filter((unit) =>
     institucion === 'AMBAS' || unit.clave_de_la_institucion === institucion
-  );
+  ), [cluesGeo, institucion]);
   const searchResults = useMemo(() => {
     const normalizedQuery = normalizeSearch(query);
     if (normalizedQuery.length < 2) return [];
@@ -461,6 +482,7 @@ function MapSection({ cluesGeo = [] }: {
       zoom: 4.8,
       attributionControl: false,
     });
+    mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
@@ -529,6 +551,17 @@ function MapSection({ cluesGeo = [] }: {
             .addTo(map);
         });
         map.on('mouseleave', 'clues-circles', () => { map.getCanvas().style.cursor = ''; popup.remove(); });
+        map.on('click', 'clues-circles', (event) => {
+          const clues = String(event.features?.[0]?.properties?.['clues'] ?? '');
+          const unit = data.find((item) => item.clues === clues);
+          if (!unit) return;
+
+          setSelectedUnit(null);
+          setRouteSummary(null);
+          setRoutePoints((current) => current.length === 1 && current[0].clues !== unit.clues
+            ? [current[0], unit]
+            : [unit]);
+        });
       };
 
       if (map.isStyleLoaded()) addLayers();
@@ -546,8 +579,106 @@ function MapSection({ cluesGeo = [] }: {
     if (map.isStyleLoaded()) removeCityLabels();
     else map.on('load', removeCityLabels);
 
-    return () => map.remove();
-  }, [cluesGeo, institucion, selectedUnit]);
+    return () => {
+      mapRef.current = null;
+      map.remove();
+    };
+  }, [unidades, institucion, selectedUnit]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const abortController = new AbortController();
+
+    const updateRoute = async () => {
+      for (const layerId of ['route-points-halo', 'route-line', 'route-line-outline']) {
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+      }
+      for (const sourceId of ['route-points', 'route']) {
+        if (map.getSource(sourceId)) map.removeSource(sourceId);
+      }
+
+      if (routePoints.length === 0) {
+        setRouteStatus('idle');
+        return;
+      }
+
+      map.addSource('route-points', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: routePoints.map((unit, index) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [unit.lng, unit.lat] },
+            properties: { order: index + 1 },
+          })),
+        },
+      });
+      map.addLayer({ id: 'route-points-halo', type: 'circle', source: 'route-points', paint: {
+        'circle-radius': 11,
+        'circle-color': '#F4B942',
+        'circle-stroke-width': 3,
+        'circle-stroke-color': '#ffffff',
+      }});
+
+      if (routePoints.length !== 2) {
+        setRouteStatus('idle');
+        return;
+      }
+
+      const [origin, destination] = routePoints;
+      setRouteStatus('loading');
+      const coordinates = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+
+      try {
+        const response = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson`,
+          { signal: abortController.signal },
+        );
+        if (!response.ok) throw new Error('No fue posible consultar la ruta');
+        const result = await response.json() as OsrmRouteResponse;
+        const route = result.routes?.[0];
+        if (result.code !== 'Ok' || !route) throw new Error('No se encontró una ruta');
+
+        map.addSource('route', {
+          type: 'geojson',
+          data: { type: 'Feature', properties: {}, geometry: route.geometry },
+        });
+        map.addLayer({ id: 'route-line-outline', type: 'line', source: 'route', paint: {
+          'line-color': '#ffffff',
+          'line-width': 8,
+          'line-opacity': 0.9,
+        }}, 'clues-halo');
+        map.addLayer({ id: 'route-line', type: 'line', source: 'route', paint: {
+          'line-color': '#E08A00',
+          'line-width': 5,
+          'line-opacity': 0.95,
+        }}, 'clues-halo');
+
+        const bounds = route.geometry.coordinates.reduce(
+          (currentBounds, coordinate) => currentBounds.extend(coordinate),
+          new maplibregl.LngLatBounds(route.geometry.coordinates[0], route.geometry.coordinates[0]),
+        );
+        map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 900 });
+        setRouteSummary({
+          distanceKm: route.distance / 1000,
+          durationMinutes: Math.round(route.duration / 60),
+        });
+        setRouteStatus('idle');
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setRouteStatus('error');
+      }
+    };
+
+    if (map.isStyleLoaded()) void updateRoute();
+    else map.once('load', updateRoute);
+
+    return () => {
+      abortController.abort();
+      map.off('load', updateRoute);
+    };
+  }, [routePoints]);
 
   const total = unidades.length;
   const unidadesPorEstado = unidades.reduce<Record<string, number>>((counts, unit) => {
@@ -560,6 +691,8 @@ function MapSection({ cluesGeo = [] }: {
   const handleSelectUnit = (unit: CluesGeoItem) => {
     setQuery(`${unit.clues} - ${unit.nombre_de_la_unidad}`);
     setSearchOpen(false);
+    setRoutePoints([]);
+    setRouteSummary(null);
     setSelectedUnit(unit);
   };
 
@@ -628,6 +761,8 @@ function MapSection({ cluesGeo = [] }: {
                   onClick={() => {
                     setInstitucion(option);
                     setSelectedUnit(null);
+                    setRoutePoints([]);
+                    setRouteSummary(null);
                   }}
                   className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
                     institucion === option
@@ -657,6 +792,39 @@ function MapSection({ cluesGeo = [] }: {
         {/* Mapa */}
         <div className="relative flex-1 overflow-hidden">
           <div ref={mapContainerRef} className="absolute inset-0" />
+          {routePoints.length > 0 && (
+            <div className="absolute left-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-bold text-gray-800">
+                  <Route className="h-4 w-4 text-amber-600" />
+                  Ruta entre CLUES
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoutePoints([]);
+                    setRouteSummary(null);
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                  aria-label="Limpiar ruta"
+                  title="Limpiar ruta"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                <p className="truncate text-gray-700"><span className="font-bold text-amber-700">Origen:</span> {routePoints[0].nombre_de_la_unidad}</p>
+                <p className="truncate text-gray-700"><span className="font-bold text-amber-700">Destino:</span> {routePoints[1]?.nombre_de_la_unidad ?? 'Pendiente'}</p>
+              </div>
+              {routeStatus === 'loading' && <p className="mt-2 text-xs font-semibold text-gray-500">Calculando ruta...</p>}
+              {routeStatus === 'error' && <p className="mt-2 text-xs font-semibold text-red-600">No fue posible calcular la ruta vial.</p>}
+              {routeSummary && (
+                <p className="mt-2 text-xs font-bold text-gray-700">
+                  {routeSummary.distanceKm.toLocaleString('es-MX', { maximumFractionDigits: 1 })} km · {routeSummary.durationMinutes.toLocaleString('es-MX')} min
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
