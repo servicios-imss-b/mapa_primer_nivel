@@ -772,7 +772,7 @@ function MapSection({ cluesGeo = [] }: {
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
-                  {option}
+                  {option === 'AMBAS' ? 'TODAS' : option}
                 </button>
               ))}
             </div>
