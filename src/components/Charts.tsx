@@ -424,22 +424,26 @@ function normalizeSearch(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+type InstitutionFilter = 'IMO' | 'IMB' | 'AMBAS';
+
 function MapSection({ cluesGeo = [] }: {
   cluesGeo?: CluesGeoItem[];
 }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const [institucion, setInstitucion] = useState<'IMO' | 'IMB'>('IMB');
+  const [institucion, setInstitucion] = useState<InstitutionFilter>('AMBAS');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
-  const unidades = cluesGeo.filter((unit) => unit.clave_de_la_institucion === institucion);
+  const unidades = cluesGeo.filter((unit) =>
+    institucion === 'AMBAS' || unit.clave_de_la_institucion === institucion
+  );
   const searchResults = useMemo(() => {
     const normalizedQuery = normalizeSearch(query);
     if (normalizedQuery.length < 2) return [];
 
     return cluesGeo
       .filter((unit) =>
-        unit.clave_de_la_institucion === institucion
+        (institucion === 'AMBAS' || unit.clave_de_la_institucion === institucion)
         && (
           normalizeSearch(unit.clues).includes(normalizedQuery)
           || normalizeSearch(unit.nombre_de_la_unidad).includes(normalizedQuery)
@@ -485,18 +489,18 @@ function MapSection({ cluesGeo = [] }: {
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': institucion === 'IMB' ? '#9F536F' : '#1A6B5E',
+          'circle-color': ['case', ['==', ['get', 'institucion'], 'IMB'], '#9F536F', '#1A6B5E'],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': institucion === 'IMB' ? '#611232' : '#002F2A',
+          'circle-color': ['case', ['==', ['get', 'institucion'], 'IMB'], '#611232', '#002F2A'],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
         const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
 
-        if (selectedUnit?.clave_de_la_institucion === institucion) {
+        if (selectedUnit && (institucion === 'AMBAS' || selectedUnit.clave_de_la_institucion === institucion)) {
           const coordinates: [number, number] = [selectedUnit.lng, selectedUnit.lat];
           map.flyTo({ center: coordinates, zoom: 13, speed: 1.4 });
           popup
@@ -572,7 +576,9 @@ function MapSection({ cluesGeo = [] }: {
               setSearchOpen(true);
             }}
             onFocus={() => setSearchOpen(true)}
-            placeholder={`Buscar por CLUES o nombre en ${institucion}`}
+            placeholder={institucion === 'AMBAS'
+              ? 'Buscar por CLUES o nombre en IMO e IMB'
+              : `Buscar por CLUES o nombre en ${institucion}`}
             aria-label="Buscar por CLUES o nombre"
             className="w-full border-0 bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400"
           />
@@ -616,7 +622,7 @@ function MapSection({ cluesGeo = [] }: {
           </div>
           <div className="flex items-center gap-3 mr-3">
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1">
-              {(['IMO', 'IMB'] as const).map((option) => (
+              {(['IMO', 'IMB', 'AMBAS'] as const).map((option) => (
                 <button
                   key={option}
                   onClick={() => {
@@ -625,7 +631,11 @@ function MapSection({ cluesGeo = [] }: {
                   }}
                   className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
                     institucion === option
-                      ? option === 'IMB' ? 'bg-[#611232] text-white' : 'bg-[#002F2A] text-white'
+                      ? option === 'IMB'
+                        ? 'bg-[#611232] text-white'
+                        : option === 'IMO'
+                          ? 'bg-[#002F2A] text-white'
+                          : 'bg-gray-700 text-white'
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
@@ -652,10 +662,18 @@ function MapSection({ cluesGeo = [] }: {
         {/* Footer */}
         <div className="flex items-center gap-5 border-t border-gray-100 bg-gray-50 px-6 py-2.5 text-xs text-gray-500">
           <span className="font-semibold text-gray-600">Institución:</span>
-          <span className="flex items-center gap-1.5">
-            <span className={`h-2.5 w-2.5 rounded-full ${institucion === 'IMB' ? 'bg-[#611232]' : 'bg-[#002F2A]'}`} />
-            {institucion}
-          </span>
+          {(institucion === 'IMO' || institucion === 'AMBAS') && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#002F2A]" />
+              IMO
+            </span>
+          )}
+          {(institucion === 'IMB' || institucion === 'AMBAS') && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#611232]" />
+              IMB
+            </span>
+          )}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
         </div>
       </section>
