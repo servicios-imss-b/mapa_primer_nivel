@@ -8,6 +8,8 @@ export interface CluesGeoItem {
   entidad: string;
   municipio: string;
   localidad: string;
+  total_consultorios: number | null;
+  poblacion_por_consultorio: number | null;
   lat: number;
   lng: number;
 }

@@ -96,11 +96,11 @@ const STAT_CARDS: StatCardDef[] = [
     icon: Building2,
     label: 'CASAS DE SALUD (CSA)',
     key: 'CSA',
-    bg: 'bg-blue-50',
-    iconBg: 'bg-blue-100',
-    iconColor: 'text-blue-700',
-    valueColor: 'text-blue-700',
-    border: 'border-blue-200',
+    bg: 'bg-[#FBF7ED]',
+    iconBg: 'bg-[#EFE4C8]',
+    iconColor: 'text-[#A57F2C]',
+    valueColor: 'text-[#A57F2C]',
+    border: 'border-[#E2D2AA]',
   },
 ];
 
@@ -418,8 +418,23 @@ function CardModal({
 
 /* ─── Mapa Modal ─── */
 
-function buildPopupHTML(clues: string, institucion: string, nombre: string, entidad: string, municipio: string, localidad: string) {
-  const color = institucion === 'IMB' ? '#611232' : institucion === 'CSA' ? '#1D4ED8' : '#002F2A';
+function buildPopupHTML(
+  clues: string,
+  institucion: string,
+  nombre: string,
+  entidad: string,
+  municipio: string,
+  localidad: string,
+  totalConsultorios: number | null,
+  poblacionPorConsultorio: number | null,
+) {
+  const color = institucion === 'IMB' ? '#611232' : institucion === 'CSA' ? '#A57F2C' : '#002F2A';
+  const consultorios = totalConsultorios === null
+    ? 'Sin dato'
+    : totalConsultorios.toLocaleString('es-MX', { maximumFractionDigits: 0 });
+  const poblacion = poblacionPorConsultorio === null
+    ? 'Sin dato'
+    : poblacionPorConsultorio.toLocaleString('es-MX', { maximumFractionDigits: 0 });
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
       <div style="font-size:11px;font-weight:700;color:#065f46">${clues}</div>
@@ -428,6 +443,10 @@ function buildPopupHTML(clues: string, institucion: string, nombre: string, enti
     <div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:2px;line-height:1.3">${nombre}</div>
     <div style="font-size:11px;color:#6b7280">${entidad}</div>
     <div style="font-size:10px;color:#9ca3af;margin-top:2px">${municipio}${localidad ? ` · ${localidad}` : ''}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb">
+      <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consultorios</div><div style="font-size:13px;font-weight:700;color:#374151">${consultorios}</div></div>
+      <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Población / consultorio</div><div style="font-size:13px;font-weight:700;color:#374151">${poblacion}</div></div>
+    </div>
   </div>`;
 }
 
@@ -514,6 +533,8 @@ function MapSection({ cluesGeo = [] }: {
                 entidad: u.entidad,
                 municipio: u.municipio,
                 localidad: u.localidad,
+                totalConsultorios: u.total_consultorios,
+                poblacionPorConsultorio: u.poblacion_por_consultorio,
               },
             })),
           },
@@ -521,12 +542,12 @@ function MapSection({ cluesGeo = [] }: {
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#9F536F', 'CSA', '#60A5FA', '#1A6B5E'],
+          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#9F536F', 'CSA', '#A57F2C', '#1A6B5E'],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#611232', 'CSA', '#1D4ED8', '#002F2A'],
+          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
@@ -543,7 +564,9 @@ function MapSection({ cluesGeo = [] }: {
               selectedUnit.nombre_de_la_unidad,
               selectedUnit.entidad,
               selectedUnit.municipio,
-              selectedUnit.localidad
+              selectedUnit.localidad,
+              selectedUnit.total_consultorios,
+              selectedUnit.poblacion_por_consultorio,
             ))
             .addTo(map);
         }
@@ -556,7 +579,9 @@ function MapSection({ cluesGeo = [] }: {
           popup.setLngLat(e.lngLat)
             .setHTML(buildPopupHTML(
               String(p['clues']), String(p['institucion']), String(p['nombre']),
-              String(p['entidad']), String(p['municipio']), String(p['localidad'])
+              String(p['entidad']), String(p['municipio']), String(p['localidad']),
+              typeof p['totalConsultorios'] === 'number' ? p['totalConsultorios'] : null,
+              typeof p['poblacionPorConsultorio'] === 'number' ? p['poblacionPorConsultorio'] : null,
             ))
             .addTo(map);
         });
@@ -734,7 +759,7 @@ function MapSection({ cluesGeo = [] }: {
                   unit.clave_de_la_institucion === 'IMB'
                     ? 'bg-[#611232]'
                     : unit.clave_de_la_institucion === 'CSA'
-                      ? 'bg-blue-700'
+                      ? 'bg-[#A57F2C]'
                       : 'bg-[#002F2A]'
                 }`} />
                 <span className="min-w-0 flex-1">
@@ -781,7 +806,7 @@ function MapSection({ cluesGeo = [] }: {
                         : option === 'IMO'
                           ? 'bg-[#002F2A] text-white'
                           : option === 'CSA'
-                            ? 'bg-blue-700 text-white'
+                            ? 'bg-[#A57F2C] text-white'
                             : 'bg-gray-700 text-white'
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
@@ -856,7 +881,7 @@ function MapSection({ cluesGeo = [] }: {
           )}
           {(institucion === 'CSA' || institucion === 'AMBAS') && (
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-700" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#A57F2C]" />
               CSA
             </span>
           )}

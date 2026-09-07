@@ -38,6 +38,8 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
     const properties = feature.properties;
     const coordinates = feature.geometry?.coordinates;
     const institucion = properties?.clave_de_la_institucion ?? properties?.institucion;
+    const totalConsultorios = Number(properties?.total_consultorios);
+    const poblacionPorConsultorio = Number(properties?.['población_por_consultorio']);
 
     if (
       feature.geometry?.type !== 'Point'
@@ -55,6 +57,12 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       entidad: String(properties.entidad ?? ''),
       municipio: String(properties.municipio ?? ''),
       localidad: String(properties.localidad ?? ''),
+      total_consultorios: properties.total_consultorios !== null && Number.isFinite(totalConsultorios)
+        ? totalConsultorios
+        : null,
+      poblacion_por_consultorio: properties['población_por_consultorio'] !== null && Number.isFinite(poblacionPorConsultorio)
+        ? poblacionPorConsultorio
+        : null,
       lng: coordinates[0],
       lat: coordinates[1],
     }];
