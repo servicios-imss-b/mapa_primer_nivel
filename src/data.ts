@@ -37,14 +37,14 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
   return payload.features.flatMap((feature) => {
     const properties = feature.properties;
     const coordinates = feature.geometry?.coordinates;
-    const institucion = properties?.clave_de_la_institucion;
+    const institucion = properties?.clave_de_la_institucion ?? properties?.institucion;
 
     if (
       feature.geometry?.type !== 'Point'
       || !Array.isArray(coordinates)
       || typeof coordinates[0] !== 'number'
       || typeof coordinates[1] !== 'number'
-      || (institucion !== 'IMO' && institucion !== 'IMB')
+      || (institucion !== 'IMO' && institucion !== 'IMB' && institucion !== 'CSA')
       || !properties?.clues
     ) return [];
 

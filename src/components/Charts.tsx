@@ -47,7 +47,8 @@ function formatTooltipNumber(value: unknown): string {
 type StatKey =
   | 'total'
   | 'IMB'
-  | 'IMO';
+  | 'IMO'
+  | 'CSA';
 
 interface StatCardDef {
   icon: typeof Layers3;
@@ -90,6 +91,16 @@ const STAT_CARDS: StatCardDef[] = [
     iconColor: 'text-[#002F2A]',
     valueColor: 'text-[#002F2A]',
     border: 'border-amber-200',
+  },
+  {
+    icon: Building2,
+    label: 'CASAS DE SALUD (CSA)',
+    key: 'CSA',
+    bg: 'bg-blue-50',
+    iconBg: 'bg-blue-100',
+    iconColor: 'text-blue-700',
+    valueColor: 'text-blue-700',
+    border: 'border-blue-200',
   },
 ];
 
@@ -408,7 +419,7 @@ function CardModal({
 /* ─── Mapa Modal ─── */
 
 function buildPopupHTML(clues: string, institucion: string, nombre: string, entidad: string, municipio: string, localidad: string) {
-  const color = institucion === 'IMB' ? '#611232' : '#002F2A';
+  const color = institucion === 'IMB' ? '#611232' : institucion === 'CSA' ? '#1D4ED8' : '#002F2A';
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
       <div style="font-size:11px;font-weight:700;color:#065f46">${clues}</div>
@@ -424,7 +435,7 @@ function normalizeSearch(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-type InstitutionFilter = 'IMO' | 'IMB' | 'AMBAS';
+type InstitutionFilter = 'IMO' | 'IMB' | 'CSA' | 'AMBAS';
 
 interface RouteSummary {
   distanceKm: number;
@@ -510,12 +521,12 @@ function MapSection({ cluesGeo = [] }: {
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': ['case', ['==', ['get', 'institucion'], 'IMB'], '#9F536F', '#1A6B5E'],
+          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#9F536F', 'CSA', '#60A5FA', '#1A6B5E'],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': ['case', ['==', ['get', 'institucion'], 'IMB'], '#611232', '#002F2A'],
+          'circle-color': ['match', ['get', 'institucion'], 'IMB', '#611232', 'CSA', '#1D4ED8', '#002F2A'],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
@@ -679,12 +690,7 @@ function MapSection({ cluesGeo = [] }: {
   }, [routePoints]);
 
   const total = unidades.length;
-  const unidadesPorEstado = unidades.reduce<Record<string, number>>((counts, unit) => {
-    counts[unit.entidad] = (counts[unit.entidad] ?? 0) + 1;
-    return counts;
-  }, {});
-  const estados = Object.entries(unidadesPorEstado);
-  const avg = estados.length ? Math.round(total / estados.length) : 0;
+  const totalInstituciones = new Set(unidades.map((unit) => unit.clave_de_la_institucion)).size;
 
   const handleSelectUnit = (unit: CluesGeoItem) => {
     setQuery(`${unit.clues} - ${unit.nombre_de_la_unidad}`);
@@ -708,7 +714,7 @@ function MapSection({ cluesGeo = [] }: {
             }}
             onFocus={() => setSearchOpen(true)}
             placeholder={institucion === 'AMBAS'
-              ? 'Buscar por CLUES o nombre en IMO e IMB'
+              ? 'Buscar por CLUES o nombre en IMO, IMB y CSA'
               : `Buscar por CLUES o nombre en ${institucion}`}
             aria-label="Buscar por CLUES o nombre"
             className="w-full border-0 bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400"
@@ -724,7 +730,13 @@ function MapSection({ cluesGeo = [] }: {
                 onClick={() => handleSelectUnit(unit)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-gray-50"
               >
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${unit.clave_de_la_institucion === 'IMB' ? 'bg-[#611232]' : 'bg-[#002F2A]'}`} />
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                  unit.clave_de_la_institucion === 'IMB'
+                    ? 'bg-[#611232]'
+                    : unit.clave_de_la_institucion === 'CSA'
+                      ? 'bg-blue-700'
+                      : 'bg-[#002F2A]'
+                }`} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-gray-800">{unit.nombre_de_la_unidad}</span>
                   <span className="block truncate text-xs text-gray-500">{unit.clues} · {unit.entidad}</span>
@@ -753,7 +765,7 @@ function MapSection({ cluesGeo = [] }: {
           </div>
           <div className="flex items-center gap-3 mr-3">
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1">
-              {(['IMO', 'IMB', 'AMBAS'] as const).map((option) => (
+              {(['IMO', 'IMB', 'CSA', 'AMBAS'] as const).map((option) => (
                 <button
                   key={option}
                   onClick={() => {
@@ -768,7 +780,9 @@ function MapSection({ cluesGeo = [] }: {
                         ? 'bg-[#611232] text-white'
                         : option === 'IMO'
                           ? 'bg-[#002F2A] text-white'
-                          : 'bg-gray-700 text-white'
+                          : option === 'CSA'
+                            ? 'bg-blue-700 text-white'
+                            : 'bg-gray-700 text-white'
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
@@ -781,8 +795,8 @@ function MapSection({ cluesGeo = [] }: {
               <p className="text-lg font-black text-emerald-700">{total.toLocaleString('es-MX')}</p>
             </div>
             <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-right">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500">Prom. por estado</p>
-              <p className="text-lg font-black text-amber-700">{avg.toLocaleString('es-MX')}</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500">Instituciones</p>
+              <p className="text-lg font-black text-amber-700">{totalInstituciones.toLocaleString('es-MX')}</p>
             </div>
           </div>
         </div>
@@ -840,6 +854,12 @@ function MapSection({ cluesGeo = [] }: {
               IMB
             </span>
           )}
+          {(institucion === 'CSA' || institucion === 'AMBAS') && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-blue-700" />
+              CSA
+            </span>
+          )}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
         </div>
       </section>
@@ -853,12 +873,13 @@ export function StatCards({
     total: { value: cluesGeo.length, helper: 'Unidades de primer nivel' },
     IMB: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMB').length, helper: 'IMSS Bienestar' },
     IMO: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMO').length, helper: 'IMSS Ordinario' },
+    CSA: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'CSA').length, helper: 'Casas de Salud' },
   };
 
   return (
     <>
       {/* Cards de métricas */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {STAT_CARDS.map((def) => (
           <StatCard
             key={def.key}
