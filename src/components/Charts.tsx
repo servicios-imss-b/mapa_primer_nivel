@@ -428,7 +428,6 @@ type InstitutionFilter = 'IMO' | 'IMB' | 'AMBAS';
 
 interface RouteSummary {
   distanceKm: number;
-  durationMinutes: number;
 }
 
 interface OsrmRouteResponse {
@@ -662,7 +661,6 @@ function MapSection({ cluesGeo = [] }: {
         map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 900 });
         setRouteSummary({
           distanceKm: route.distance / 1000,
-          durationMinutes: Math.round(route.duration / 60),
         });
         setRouteStatus('idle');
       } catch (error) {
@@ -820,7 +818,7 @@ function MapSection({ cluesGeo = [] }: {
               {routeStatus === 'error' && <p className="mt-2 text-xs font-semibold text-red-600">No fue posible calcular la ruta vial.</p>}
               {routeSummary && (
                 <p className="mt-2 text-xs font-bold text-gray-700">
-                  {routeSummary.distanceKm.toLocaleString('es-MX', { maximumFractionDigits: 1 })} km · {routeSummary.durationMinutes.toLocaleString('es-MX')} min
+                  {routeSummary.distanceKm.toLocaleString('es-MX', { maximumFractionDigits: 1 })} km
                 </p>
               )}
             </div>
