@@ -10,6 +10,7 @@ export interface CluesGeoItem {
   localidad: string;
   total_consultorios: number | null;
   poblacion_por_consultorio: number | null;
+  consulta_general: number | null;
   lat: number;
   lng: number;
 }

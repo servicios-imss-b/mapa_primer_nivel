@@ -427,6 +427,7 @@ function buildPopupHTML(
   localidad: string,
   totalConsultorios: number | null,
   poblacionPorConsultorio: number | null,
+  consultaGeneral: number | null,
 ) {
   const color = institucion === 'IMB' ? '#611232' : institucion === 'CSA' ? '#A57F2C' : '#002F2A';
   const consultorios = totalConsultorios === null
@@ -435,6 +436,9 @@ function buildPopupHTML(
   const poblacion = poblacionPorConsultorio === null
     ? 'Sin dato'
     : poblacionPorConsultorio.toLocaleString('es-MX', { maximumFractionDigits: 0 });
+  const consultas = consultaGeneral === null
+    ? 'Sin dato'
+    : consultaGeneral.toLocaleString('es-MX', { maximumFractionDigits: 0 });
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
       <div style="font-size:11px;font-weight:700;color:#065f46">${clues}</div>
@@ -446,6 +450,7 @@ function buildPopupHTML(
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb">
       <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consultorios</div><div style="font-size:13px;font-weight:700;color:#374151">${consultorios}</div></div>
       <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Población / consultorio</div><div style="font-size:13px;font-weight:700;color:#374151">${poblacion}</div></div>
+      <div style="grid-column:1/-1"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consulta general</div><div style="font-size:13px;font-weight:700;color:#374151">${consultas}</div></div>
     </div>
   </div>`;
 }
@@ -535,6 +540,7 @@ function MapSection({ cluesGeo = [] }: {
                 localidad: u.localidad,
                 totalConsultorios: u.total_consultorios,
                 poblacionPorConsultorio: u.poblacion_por_consultorio,
+                consultaGeneral: u.consulta_general,
               },
             })),
           },
@@ -567,6 +573,7 @@ function MapSection({ cluesGeo = [] }: {
               selectedUnit.localidad,
               selectedUnit.total_consultorios,
               selectedUnit.poblacion_por_consultorio,
+              selectedUnit.consulta_general,
             ))
             .addTo(map);
         }
@@ -582,6 +589,7 @@ function MapSection({ cluesGeo = [] }: {
               String(p['entidad']), String(p['municipio']), String(p['localidad']),
               typeof p['totalConsultorios'] === 'number' ? p['totalConsultorios'] : null,
               typeof p['poblacionPorConsultorio'] === 'number' ? p['poblacionPorConsultorio'] : null,
+              typeof p['consultaGeneral'] === 'number' ? p['consultaGeneral'] : null,
             ))
             .addTo(map);
         });
