@@ -559,25 +559,6 @@ function MapSection({ cluesGeo = [] }: {
 
         const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
 
-        if (selectedUnit && (institucion === 'AMBAS' || selectedUnit.clave_de_la_institucion === institucion)) {
-          const coordinates: [number, number] = [selectedUnit.lng, selectedUnit.lat];
-          map.flyTo({ center: coordinates, zoom: 13, speed: 1.4 });
-          popup
-            .setLngLat(coordinates)
-            .setHTML(buildPopupHTML(
-              selectedUnit.clues,
-              selectedUnit.clave_de_la_institucion,
-              selectedUnit.nombre_de_la_unidad,
-              selectedUnit.entidad,
-              selectedUnit.municipio,
-              selectedUnit.localidad,
-              selectedUnit.total_consultorios,
-              selectedUnit.poblacion_por_consultorio,
-              selectedUnit.consulta_general,
-            ))
-            .addTo(map);
-        }
-
         map.on('mouseenter', 'clues-circles', (e) => {
           map.getCanvas().style.cursor = 'pointer';
           const feat = e.features?.[0];
@@ -626,7 +607,40 @@ function MapSection({ cluesGeo = [] }: {
       mapRef.current = null;
       map.remove();
     };
-  }, [unidades, institucion, selectedUnit]);
+  }, [unidades, institucion]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selectedUnit || (institucion !== 'AMBAS' && selectedUnit.clave_de_la_institucion !== institucion)) return;
+
+    const coordinates: [number, number] = [selectedUnit.lng, selectedUnit.lat];
+    const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
+    const showSelectedUnit = () => {
+      map.flyTo({ center: coordinates, zoom: 13, speed: 1.4 });
+      popup
+        .setLngLat(coordinates)
+        .setHTML(buildPopupHTML(
+          selectedUnit.clues,
+          selectedUnit.clave_de_la_institucion,
+          selectedUnit.nombre_de_la_unidad,
+          selectedUnit.entidad,
+          selectedUnit.municipio,
+          selectedUnit.localidad,
+          selectedUnit.total_consultorios,
+          selectedUnit.poblacion_por_consultorio,
+          selectedUnit.consulta_general,
+        ))
+        .addTo(map);
+    };
+
+    if (map.isStyleLoaded()) showSelectedUnit();
+    else map.once('load', showSelectedUnit);
+
+    return () => {
+      map.off('load', showSelectedUnit);
+      popup.remove();
+    };
+  }, [institucion, selectedUnit]);
 
   useEffect(() => {
     const map = mapRef.current;
