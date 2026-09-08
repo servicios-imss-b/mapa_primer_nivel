@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { Layers3, Building2, X, MapPin, Search, Route, Trash2 } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
+import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import type { DashboardStats, CluesGeoItem, EntidadChart, InternetPieItem, TopFaltanteChart } from '../types';
 
 interface ChartsProps {
@@ -477,11 +478,33 @@ interface OsrmRouteResponse {
   }>;
 }
 
+type VoronoiFeatureCollection = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
+
+const EMPTY_VORONOI: VoronoiFeatureCollection = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
+function removeRouteFromMap(map: maplibregl.Map) {
+  try {
+    for (const layerId of ['route-points-halo', 'route-line', 'route-line-outline']) {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+    }
+    for (const sourceId of ['route-points', 'route']) {
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+    }
+  } catch {
+    // La instancia puede haberse desmontado antes que este efecto.
+  }
+}
+
 function MapSection({ cluesGeo = [] }: {
   cluesGeo?: CluesGeoItem[];
 }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const voronoiIndexRef = useRef<Record<string, string> | null>(null);
+  const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const [institucion, setInstitucion] = useState<InstitutionFilter>('AMBAS');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -506,6 +529,10 @@ function MapSection({ cluesGeo = [] }: {
       )
       .slice(0, 8);
   }, [cluesGeo, institucion, query]);
+  const activeVoronoiUnits = useMemo(
+    () => routePoints.length > 0 ? routePoints : selectedUnit ? [selectedUnit] : [],
+    [routePoints, selectedUnit],
+  );
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -524,6 +551,19 @@ function MapSection({ cluesGeo = [] }: {
       const data = unidades;
       const addLayers = () => {
         if (map.getSource('clues')) return;
+        map.addSource('selected-voronoi', {
+          type: 'geojson',
+          data: EMPTY_VORONOI,
+        });
+        map.addLayer({ id: 'selected-voronoi-fill', type: 'fill', source: 'selected-voronoi', paint: {
+          'fill-color': ['match', ['get', 'institucion'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
+          'fill-opacity': 0.2,
+        }});
+        map.addLayer({ id: 'selected-voronoi-outline', type: 'line', source: 'selected-voronoi', paint: {
+          'line-color': ['match', ['get', 'institucion'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
+          'line-width': 2.5,
+          'line-opacity': 0.9,
+        }});
         map.addSource('clues', {
           type: 'geojson',
           data: {
@@ -611,6 +651,77 @@ function MapSection({ cluesGeo = [] }: {
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map) return;
+    const abortController = new AbortController();
+
+    const updateVoronoi = async () => {
+      const source = map.getSource('selected-voronoi') as maplibregl.GeoJSONSource | undefined;
+      if (!source) return;
+      if (activeVoronoiUnits.length === 0) {
+        source.setData(EMPTY_VORONOI);
+        return;
+      }
+
+      try {
+        if (!voronoiIndexRef.current) {
+          const response = await fetch(`${import.meta.env.BASE_URL}voronoi/index.json`, {
+            signal: abortController.signal,
+          });
+          if (!response.ok) throw new Error('No fue posible cargar el índice Voronoi');
+          voronoiIndexRef.current = await response.json() as Record<string, string>;
+        }
+
+        const fragmentNames = [...new Set(activeVoronoiUnits
+          .map((unit) => voronoiIndexRef.current?.[unit.clues])
+          .filter((name): name is string => Boolean(name)))];
+        const fragments = await Promise.all(fragmentNames.map(async (fragmentName) => {
+          const cachedFragment = voronoiFragmentsRef.current.get(fragmentName);
+          if (cachedFragment) return cachedFragment;
+
+          const response = await fetch(`${import.meta.env.BASE_URL}voronoi/${fragmentName}`, {
+            signal: abortController.signal,
+          });
+          if (!response.ok) throw new Error('No fue posible cargar el fragmento Voronoi');
+          const fragment = await response.json() as VoronoiFeatureCollection;
+          voronoiFragmentsRef.current.set(fragmentName, fragment);
+          return fragment;
+        }));
+        const featuresByClues = new Map(
+          fragments.flatMap((fragment) => fragment.features).map(
+            (feature) => [String(feature.properties.clues ?? ''), feature] as const,
+          ),
+        );
+        const selectedFeatures = activeVoronoiUnits.flatMap((unit) => {
+          const feature = featuresByClues.get(unit.clues);
+          return feature ? [{
+            ...feature,
+            properties: {
+              ...feature.properties,
+              institucion: unit.clave_de_la_institucion,
+            },
+          }] : [];
+        });
+        source.setData(selectedFeatures.length > 0 ? {
+          type: 'FeatureCollection',
+          features: selectedFeatures,
+        } : EMPTY_VORONOI);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        source.setData(EMPTY_VORONOI);
+      }
+    };
+
+    if (map.isStyleLoaded()) void updateVoronoi();
+    else map.once('load', updateVoronoi);
+
+    return () => {
+      abortController.abort();
+      map.off('load', updateVoronoi);
+    };
+  }, [activeVoronoiUnits]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !selectedUnit || (institucion !== 'AMBAS' && selectedUnit.clave_de_la_institucion !== institucion)) return;
 
     const coordinates: [number, number] = [selectedUnit.lng, selectedUnit.lat];
@@ -646,14 +757,10 @@ function MapSection({ cluesGeo = [] }: {
     const map = mapRef.current;
     if (!map) return;
     const abortController = new AbortController();
+    let disposed = false;
 
     const updateRoute = async () => {
-      for (const layerId of ['route-points-halo', 'route-line', 'route-line-outline']) {
-        if (map.getLayer(layerId)) map.removeLayer(layerId);
-      }
-      for (const sourceId of ['route-points', 'route']) {
-        if (map.getSource(sourceId)) map.removeSource(sourceId);
-      }
+      removeRouteFromMap(map);
 
       if (routePoints.length === 0) {
         setRouteStatus('idle');
@@ -696,6 +803,7 @@ function MapSection({ cluesGeo = [] }: {
         const result = await response.json() as OsrmRouteResponse;
         const route = result.routes?.[0];
         if (result.code !== 'Ok' || !route) throw new Error('No se encontró una ruta');
+        if (disposed) return;
 
         map.addSource('route', {
           type: 'geojson',
@@ -731,8 +839,10 @@ function MapSection({ cluesGeo = [] }: {
     else map.once('load', updateRoute);
 
     return () => {
+      disposed = true;
       abortController.abort();
       map.off('load', updateRoute);
+      if (mapRef.current === map) removeRouteFromMap(map);
     };
   }, [routePoints]);
 
@@ -861,8 +971,10 @@ function MapSection({ cluesGeo = [] }: {
                 <button
                   type="button"
                   onClick={() => {
+                    if (mapRef.current) removeRouteFromMap(mapRef.current);
                     setRoutePoints([]);
                     setRouteSummary(null);
+                    setRouteStatus('idle');
                   }}
                   className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
                   aria-label="Limpiar ruta"
