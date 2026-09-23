@@ -4,6 +4,7 @@ export type DataRow = Record<string, CellValue>;
 export interface CluesGeoItem {
   clues: string;
   clave_de_la_institucion: 'IMO' | 'IMB' | 'CSA';
+  aceptado: 'Aceptada' | 'No aceptada' | null;
   nombre_de_la_unidad: string;
   entidad: string;
   municipio: string;

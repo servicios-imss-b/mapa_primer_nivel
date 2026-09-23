@@ -38,6 +38,7 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
     const properties = feature.properties;
     const coordinates = feature.geometry?.coordinates;
     const institucion = properties?.clave_de_la_institucion ?? properties?.institucion;
+    const aceptado = properties?.aceptado;
     const totalConsultorios = Number(properties?.total_consultorios);
     const poblacionPorConsultorio = Number(properties?.['población_por_consultorio']);
     const consultaGeneral = Number(properties?.consulta_general);
@@ -54,6 +55,7 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
     return [{
       clues: String(properties.clues),
       clave_de_la_institucion: institucion,
+      aceptado: aceptado === 'Aceptada' || aceptado === 'No aceptada' ? aceptado : null,
       nombre_de_la_unidad: String(properties.nombre_unidad ?? ''),
       entidad: String(properties.entidad ?? ''),
       municipio: String(properties.municipio ?? ''),
