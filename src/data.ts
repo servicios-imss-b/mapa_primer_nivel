@@ -35,9 +35,13 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
   if (!Array.isArray(payload?.features)) return [];
 
   return payload.features.flatMap((feature) => {
-    const properties = feature.properties;
+    const properties = feature.properties ?? {};
     const coordinates = feature.geometry?.coordinates;
     const institucion = properties?.clave_de_la_institucion ?? properties?.institucion;
+    const idTempSus = String(properties?.id_temp_sus ?? '').trim();
+    const identifier = institucion === 'CSA' && idTempSus
+      ? idTempSus
+      : String(properties?.clues ?? '').trim();
     const aceptado = properties?.aceptado;
     const totalConsultorios = Number(properties?.total_consultorios);
     const poblacionPorConsultorio = Number(properties?.['población_por_consultorio']);
@@ -49,11 +53,12 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       || typeof coordinates[0] !== 'number'
       || typeof coordinates[1] !== 'number'
       || (institucion !== 'IMO' && institucion !== 'IMB' && institucion !== 'CSA')
-      || !properties?.clues
+      || !identifier
     ) return [];
 
     return [{
-      clues: String(properties.clues),
+      clues: identifier,
+      id_temp_sus: institucion === 'CSA' && idTempSus ? idTempSus : undefined,
       clave_de_la_institucion: institucion,
       aceptado: aceptado === 'Aceptada' || aceptado === 'No aceptada' ? aceptado : null,
       nombre_de_la_unidad: String(properties.nombre_unidad ?? ''),
@@ -73,12 +78,6 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       lat: coordinates[1],
     }];
   });
-}
-
-async function fetchTablaUnidades(): Promise<Set<string>> {
-  const payload = await fetchJson<unknown[]>('tabla_unidades.json');
-  if (!Array.isArray(payload)) return new Set();
-  return new Set(payload.map((v) => String(v).trim()).filter(Boolean));
 }
 
 async function fetchBaseMeta(): Promise<{ cluesTotal: number; entidadesEsperadas: number; scriptLastRunAt?: string }> {
@@ -117,26 +116,20 @@ async function fetchDataRows(filename: string): Promise<DataRow[]> {
 }
 
 export async function cargarTablasFormulario(): Promise<{ tablas: TablasFormulario; fetchedAt: Date }> {
-  const [baseClues, baseMeta, cluesGeo, resultado, resumen, resumenEntidad, faltantes, baseAn] = await Promise.all([
+  const [baseClues, baseMeta, cluesGeo, resultado, resumen] = await Promise.all([
     fetchBaseClues(),
     fetchBaseMeta(),
     fetchCluesGeo(),
     fetchDataRows('resultado.json'),
     fetchDataRows('resumen.json'),
-    fetchDataRows('resumen_entidad.json'),
-    fetchDataRows('faltantes.json'),
-    fetchDataRows('base_an.json'),
   ]);
 
   const tablas: TablasFormulario = {
     baseClues,
     baseMeta,
-    baseAn,
     resultado,
     resumen,
-    resumenEntidad,
     cluesGeo,
-    faltantes,
   };
 
   return { tablas, fetchedAt: new Date() };

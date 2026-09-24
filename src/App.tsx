@@ -59,24 +59,6 @@ function parseDateValue(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function inferDataUpdatedAt(rows: DataRow[]): Date | null {
-  let latest: Date | null = null;
-
-  for (const row of rows) {
-    for (const [key, value] of Object.entries(row)) {
-      if (!/fecha/i.test(key)) continue;
-      const parsed = parseDateValue(value);
-      if (!parsed) continue;
-
-      if (!latest || parsed.getTime() > latest.getTime()) {
-        latest = parsed;
-      }
-    }
-  }
-
-  return latest;
-}
-
 function formatLastUpdateLabel(date: Date): string {
   const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const day = String(date.getDate()).padStart(2, '0');
@@ -111,7 +93,6 @@ function formatCellValue(value: unknown, key?: string): string {
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [baseAn, setBaseAn] = useState<DataRow[]>([]);
   const [baseClues, setBaseClues] = useState<string[]>([]);
   const [baseMeta, setBaseMeta] = useState<{ cluesTotal: number; entidadesEsperadas: number }>({
     cluesTotal: 0,
@@ -120,7 +101,6 @@ export default function App() {
   const [resultado, setResultado] = useState<DataRow[]>([]);
   const [resumen, setResumen] = useState<DataRow[]>([]);
   const [cluesGeo, setCluesGeo] = useState<CluesGeoItem[]>([]);
-  const [faltantes, setFaltantes] = useState<DataRow[]>([]);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   async function load() {
@@ -130,14 +110,12 @@ export default function App() {
       const { tablas } = await cargarTablasFormulario();
       setBaseClues(tablas.baseClues);
       setBaseMeta(tablas.baseMeta);
-      setBaseAn(tablas.baseAn);
       setResultado(tablas.resultado);
       setResumen(tablas.resumen);
       setCluesGeo(tablas.cluesGeo);
-      setFaltantes(tablas.faltantes);
 
       const updatedFromScript = parseDateValue(tablas.baseMeta.scriptLastRunAt);
-      setLastUpdate(updatedFromScript ?? inferDataUpdatedAt(tablas.baseAn));
+      setLastUpdate(updatedFromScript);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocurrio un error al cargar datos');
     } finally {

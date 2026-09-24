@@ -600,6 +600,7 @@ function MapSection({ cluesGeo = [] }: {
               geometry: { type: 'Point', coordinates: [u.lng, u.lat] },
               properties: {
                 clues: u.clues,
+                id_temp_sus: u.id_temp_sus,
                 institucion: u.clave_de_la_institucion,
                 aceptado: u.aceptado,
                 categoria: getMapCategory(u),

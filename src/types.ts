@@ -3,6 +3,7 @@ export type DataRow = Record<string, CellValue>;
 
 export interface CluesGeoItem {
   clues: string;
+  id_temp_sus?: string;
   clave_de_la_institucion: 'IMO' | 'IMB' | 'CSA';
   aceptado: 'Aceptada' | 'No aceptada' | null;
   nombre_de_la_unidad: string;
@@ -23,12 +24,9 @@ export interface TablasFormulario {
     entidadesEsperadas: number;
     scriptLastRunAt?: string;
   };
-  baseAn: DataRow[];
   resultado: DataRow[];
   resumen: DataRow[];
-  resumenEntidad: DataRow[];
   cluesGeo: CluesGeoItem[];
-  faltantes: DataRow[];
 }
 
 export interface DashboardStats {
