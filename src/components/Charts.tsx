@@ -419,9 +419,20 @@ function CardModal({
 
 /* ─── Mapa Modal ─── */
 
+const CSA_ACCEPTED_COLOR = '#A57F2C';
+const CSA_NOT_ACCEPTED_COLOR = '#98989A';
+const CSA_DEFAULT_COLOR = '#A57F2C';
+
+function getCsaStatusColor(accion?: string): string {
+  if (accion?.trim() === 'Aceptada') return CSA_ACCEPTED_COLOR;
+  if (accion?.trim() === 'No aceptada') return CSA_NOT_ACCEPTED_COLOR;
+  return CSA_DEFAULT_COLOR;
+}
+
 function buildPopupHTML(
   clues: string,
   institucion: string,
+  accion: string | undefined,
   nombre: string,
   entidad: string,
   municipio: string,
@@ -433,7 +444,7 @@ function buildPopupHTML(
   const color = institucion === 'IMB'
     ? '#611232'
     : institucion === 'CSA'
-      ? '#A57F2C'
+      ? getCsaStatusColor(accion)
       : '#002F2A';
   const consultorios = totalConsultorios === null
     ? 'Sin dato'
@@ -583,11 +594,11 @@ function MapSection({ cluesGeo = [] }: {
           data: EMPTY_VORONOI,
         });
         map.addLayer({ id: 'selected-voronoi-fill', type: 'fill', source: 'selected-voronoi', paint: {
-          'fill-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
+          'fill-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#A57F2C', 'No aceptada', '#98989A', '#A57F2C'], ['match', ['get', 'categoria'], 'IMB', '#611232', '#002F2A']],
           'fill-opacity': 0.2,
         }});
         map.addLayer({ id: 'selected-voronoi-outline', type: 'line', source: 'selected-voronoi', paint: {
-          'line-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
+          'line-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#A57F2C', 'No aceptada', '#98989A', '#A57F2C'], ['match', ['get', 'categoria'], 'IMB', '#611232', '#002F2A']],
           'line-width': 2.5,
           'line-opacity': 0.9,
         }});
@@ -601,12 +612,12 @@ function MapSection({ cluesGeo = [] }: {
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': ['match', ['get', 'categoria'], 'IMB', '#9F536F', 'CSA', '#D5B05B', '#1A6B5E'],
+          'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#D5B05B', 'No aceptada', '#98989A', '#D5B05B'], ['match', ['get', 'categoria'], 'IMB', '#9F536F', '#1A6B5E']],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA', '#A57F2C', '#002F2A'],
+          'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#A57F2C', 'No aceptada', '#98989A', '#A57F2C'], ['match', ['get', 'categoria'], 'IMB', '#611232', '#002F2A']],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
@@ -619,7 +630,7 @@ function MapSection({ cluesGeo = [] }: {
           const p = feat.properties as Record<string, unknown>;
           popup.setLngLat(e.lngLat)
             .setHTML(buildPopupHTML(
-              String(p['clues']), String(p['institucion']),
+              String(p['clues']), String(p['institucion']), String(p['accion']),
               String(p['nombre']),
               String(p['entidad']), String(p['municipio']), String(p['localidad']),
               typeof p['totalConsultorios'] === 'number' ? p['totalConsultorios'] : null,
@@ -748,6 +759,7 @@ function MapSection({ cluesGeo = [] }: {
               ...feature.properties,
               institucion: unit.clave_de_la_institucion,
               categoria: getMapCategory(unit),
+              accion: unit.accion,
             },
           }] : [];
         });
@@ -783,6 +795,7 @@ function MapSection({ cluesGeo = [] }: {
         .setHTML(buildPopupHTML(
           selectedUnit.clues,
           selectedUnit.clave_de_la_institucion,
+          selectedUnit.accion,
           selectedUnit.nombre_de_la_unidad,
           selectedUnit.entidad,
           selectedUnit.municipio,
@@ -941,7 +954,11 @@ function MapSection({ cluesGeo = [] }: {
                   unit.clave_de_la_institucion === 'IMB'
                     ? 'bg-[#611232]'
                     : getMapCategory(unit) === 'CSA'
-                      ? 'bg-[#A57F2C]'
+                      ? unit.accion?.trim() === 'Aceptada'
+                        ? 'bg-[#A57F2C]'
+                        : unit.accion?.trim() === 'No aceptada'
+                          ? 'bg-[#98989A]'
+                          : 'bg-[#A57F2C]'
                       : 'bg-[#002F2A]'
                 }`} />
                 <span className="min-w-0 flex-1">
@@ -1083,10 +1100,10 @@ function MapSection({ cluesGeo = [] }: {
                       csaStatus === status
                         ? status === 'Aceptada'
                           ? 'border-[#A57F2C] bg-[#A57F2C] ring-2 ring-[#A57F2C]/25'
-                          : 'border-gray-500 bg-gray-500 ring-2 ring-gray-400/30'
+                          : 'border-[#98989A] bg-[#98989A] ring-2 ring-[#98989A]/30'
                         : status === 'Aceptada'
                           ? 'border-[#A57F2C] bg-[#A57F2C]/35'
-                          : 'border-gray-400 bg-gray-300'
+                          : 'border-[#98989A] bg-[#98989A]/35'
                     }`}
                   />
                   <span>{status === 'Aceptada' ? 'Aceptadas' : 'No aceptadas'}</span>
