@@ -5,7 +5,7 @@ export interface CluesGeoItem {
   clues: string;
   id_temp_sus?: string;
   clave_de_la_institucion: 'IMO' | 'IMB' | 'CSA';
-  aceptado: 'Aceptada' | 'No aceptada' | null;
+  accion: string | null;
   nombre_de_la_unidad: string;
   entidad: string;
   municipio: string;
