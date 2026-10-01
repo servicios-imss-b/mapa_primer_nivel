@@ -801,7 +801,7 @@ function MapSection({ cluesGeo = [] }: {
       map.off('load', showSelectedUnit);
       popup.remove();
     };
-  }, [csaStatus, institucion, selectedUnit]);
+  }, [selectedUnit]);
 
   useEffect(() => {
     const map = mapRef.current;
