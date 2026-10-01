@@ -466,6 +466,7 @@ function normalizeSearch(value: string): string {
 }
 
 type InstitutionFilter = 'IMO' | 'IMB' | 'CSA' | 'TODAS';
+type CsaStatusFilter = 'TODAS' | 'Aceptada' | 'No aceptada';
 type MapCategory = 'IMO' | 'IMB' | 'CSA';
 
 function getMapCategory(unit: CluesGeoItem): MapCategory {
@@ -473,8 +474,15 @@ function getMapCategory(unit: CluesGeoItem): MapCategory {
   return 'CSA';
 }
 
-function matchesInstitutionFilter(unit: CluesGeoItem, filter: InstitutionFilter): boolean {
-  return filter === 'TODAS' || unit.clave_de_la_institucion === filter;
+function matchesInstitutionFilter(
+  unit: CluesGeoItem,
+  filter: InstitutionFilter,
+  csaStatus: CsaStatusFilter,
+): boolean {
+  if (filter !== 'TODAS' && unit.clave_de_la_institucion !== filter) return false;
+  return csaStatus === 'TODAS'
+    || unit.clave_de_la_institucion !== 'CSA'
+    || unit.accion?.trim() === csaStatus;
 }
 
 interface RouteSummary {
@@ -521,6 +529,7 @@ function MapSection({ cluesGeo = [] }: {
   const voronoiIndexRef = useRef<Record<string, string> | null>(null);
   const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const [institucion, setInstitucion] = useState<InstitutionFilter>('TODAS');
+  const [csaStatus, setCsaStatus] = useState<CsaStatusFilter>('TODAS');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
@@ -529,9 +538,9 @@ function MapSection({ cluesGeo = [] }: {
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const unidades = useMemo(
     () => cluesGeo.filter((unit) =>
-      matchesInstitutionFilter(unit, institucion)
+      matchesInstitutionFilter(unit, institucion, csaStatus)
     ),
-    [cluesGeo, institucion],
+    [cluesGeo, institucion, csaStatus],
   );
   const unidadesRef = useRef<CluesGeoItem[]>([]);
   unidadesRef.current = unidades;
@@ -541,14 +550,14 @@ function MapSection({ cluesGeo = [] }: {
 
     return cluesGeo
       .filter((unit) =>
-        matchesInstitutionFilter(unit, institucion)
+        matchesInstitutionFilter(unit, institucion, csaStatus)
         && (
           normalizeSearch(unit.clues).includes(normalizedQuery)
           || normalizeSearch(unit.nombre_de_la_unidad).includes(normalizedQuery)
         )
       )
       .slice(0, 8);
-  }, [cluesGeo, institucion, query]);
+  }, [cluesGeo, institucion, csaStatus, query]);
   const activeVoronoiUnits = useMemo(
     () => routePoints.length > 0 ? routePoints : selectedUnit ? [selectedUnit] : [],
     [routePoints, selectedUnit],
@@ -763,7 +772,7 @@ function MapSection({ cluesGeo = [] }: {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedUnit || !matchesInstitutionFilter(selectedUnit, institucion)) return;
+    if (!map || !selectedUnit || !matchesInstitutionFilter(selectedUnit, institucion, csaStatus)) return;
 
     const coordinates: [number, number] = [selectedUnit.lng, selectedUnit.lat];
     const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
@@ -792,7 +801,7 @@ function MapSection({ cluesGeo = [] }: {
       map.off('load', showSelectedUnit);
       popup.remove();
     };
-  }, [institucion, selectedUnit]);
+  }, [csaStatus, institucion, selectedUnit]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -968,6 +977,7 @@ function MapSection({ cluesGeo = [] }: {
                   key={option}
                   onClick={() => {
                     setInstitucion(option);
+                    setCsaStatus('TODAS');
                     setSelectedUnit(null);
                     setRoutePoints([]);
                     setRouteSummary(null);
@@ -1054,11 +1064,35 @@ function MapSection({ cluesGeo = [] }: {
               IMB
             </span>
           )}
-          {(institucion === 'CSA' || institucion === 'TODAS') && (
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#A57F2C]" />
-              CSA
-            </span>
+          {institucion === 'CSA' && (
+            <div className="flex flex-wrap items-center gap-3 basis-full pl-16">
+              {(['Aceptada', 'No aceptada'] as const).map((status) => (
+                <span key={status} className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-pressed={csaStatus === status}
+                    aria-label={`Mostrar casas ${status.toLowerCase()}s`}
+                    title={`Casas ${status.toLowerCase()}s`}
+                    onClick={() => {
+                      setCsaStatus(status);
+                      setSelectedUnit(null);
+                      setRoutePoints([]);
+                      setRouteSummary(null);
+                    }}
+                    className={`h-2.5 w-2.5 rounded-full border transition-transform hover:scale-125 ${
+                      csaStatus === status
+                        ? status === 'Aceptada'
+                          ? 'border-[#A57F2C] bg-[#A57F2C] ring-2 ring-[#A57F2C]/25'
+                          : 'border-gray-500 bg-gray-500 ring-2 ring-gray-400/30'
+                        : status === 'Aceptada'
+                          ? 'border-[#A57F2C] bg-[#A57F2C]/35'
+                          : 'border-gray-400 bg-gray-300'
+                    }`}
+                  />
+                  <span>{status === 'Aceptada' ? 'Aceptadas' : 'No aceptadas'}</span>
+                </span>
+              ))}
+            </div>
           )}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
         </div>
@@ -1069,13 +1103,19 @@ function MapSection({ cluesGeo = [] }: {
 export function StatCards({
   cluesGeo = [],
 }: ChartsProps) {
+  const casasAceptadas = cluesGeo.filter(
+    (unit) => unit.clave_de_la_institucion === 'CSA' && unit.accion?.trim() === 'Aceptada',
+  ).length;
+  const casasNoAceptadas = cluesGeo.filter(
+    (unit) => unit.clave_de_la_institucion === 'CSA' && unit.accion?.trim() === 'No aceptada',
+  ).length;
   const values: Record<StatKey, { value: number; helper: string }> = {
     total: { value: cluesGeo.length, helper: 'Unidades de primer nivel' },
     IMB: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMB').length, helper: 'IMSS Bienestar' },
     IMO: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMO').length, helper: 'IMSS Ordinario' },
     CSA: {
       value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'CSA').length,
-      helper: 'Filtradas por accion en la base de casas de salud',
+      helper: `Aceptadas: ${casasAceptadas.toLocaleString('es-MX')} · No aceptadas: ${casasNoAceptadas.toLocaleString('es-MX')}`,
     },
   };
 
