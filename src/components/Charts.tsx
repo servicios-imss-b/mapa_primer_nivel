@@ -514,6 +514,33 @@ interface OsrmRouteResponse {
 
 type VoronoiFeatureCollection = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
 
+const STATE_CONTOUR_COLORS: Record<string, string> = {
+  'Baja California': '#0072B2',
+  'Baja California Sur': '#B45309',
+  'Campeche': '#047857',
+  'Chiapas': '#BE123C',
+  'Ciudad de México': '#6D28D9',
+  'Colima': '#DB2777',
+  'Guerrero': '#C2410C',
+  'Hidalgo': '#4338CA',
+  'México': '#A21CAF',
+  'Michoacán': '#3F6212',
+  'Morelos': '#B91C1C',
+  'Nayarit': '#D97706',
+  'Oaxaca': '#7E22CE',
+  'Puebla': '#0F766E',
+  'Quintana Roo': '#A16207',
+  'San Luis Potosí': '#9D174D',
+  'Sinaloa': '#15803D',
+  'Sonora': '#92400E',
+  'Tabasco': '#1D4ED8',
+  'Tamaulipas': '#86198F',
+  'Tlaxcala': '#4D7C0F',
+  'Veracruz': '#9F1239',
+  'Yucatán': '#155E75',
+  'Zacatecas': '#5B21B6',
+};
+
 const EMPTY_VORONOI: VoronoiFeatureCollection = {
   type: 'FeatureCollection',
   features: [],
@@ -541,6 +568,10 @@ function MapSection({ cluesGeo = [] }: {
   const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const [institucion, setInstitucion] = useState<InstitutionFilter>('TODAS');
   const [csaStatus, setCsaStatus] = useState<CsaStatusFilter>('TODAS');
+  const [showStateContours, setShowStateContours] = useState(true);
+  const [stateContoursReady, setStateContoursReady] = useState(false);
+  const introCompleteRef = useRef(false);
+  const [introPhase, setIntroPhase] = useState<'waiting' | 'contours' | 'map' | 'points' | 'ready'>('waiting');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
@@ -584,11 +615,89 @@ function MapSection({ cluesGeo = [] }: {
       attributionControl: false,
     });
     mapRef.current = map;
+    const contourAbortController = new AbortController();
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
     const addLayers = () => {
         if (map.getSource('clues')) return;
+        map.addLayer({
+          id: 'intro-backdrop',
+          type: 'background',
+          paint: {
+            'background-color': '#000000',
+            'background-opacity': window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1,
+            'background-opacity-transition': { duration: 0, delay: 0 },
+          },
+        });
+        map.addSource('state-contours', {
+          type: 'geojson',
+          data: `${import.meta.env.BASE_URL}contorno_estados.geojson`,
+        });
+        map.addLayer({ id: 'state-contours-hit', type: 'fill', source: 'state-contours', paint: {
+          'fill-opacity': 0,
+        }});
+        map.addSource('state-contour-lines', {
+          type: 'geojson',
+          lineMetrics: true,
+          data: { type: 'FeatureCollection', features: [] },
+        });
+        for (const [entity, color] of Object.entries(STATE_CONTOUR_COLORS)) {
+          map.addLayer({
+            id: `state-contours-outline-${entity}`,
+            type: 'line',
+            source: 'state-contour-lines',
+            filter: ['==', ['get', 'entidad'], entity],
+            paint: {
+              'line-color': color,
+              'line-gradient': ['step', ['line-progress'], 'rgba(0, 0, 0, 0)', 1, 'rgba(0, 0, 0, 0)'],
+              'line-width': 2.2,
+              'line-opacity': 0.95,
+            },
+          });
+        }
+        void fetch(`${import.meta.env.BASE_URL}contorno_estados.geojson`, {
+          signal: contourAbortController.signal,
+        }).then(async (response) => {
+          if (!response.ok) throw new Error('No fue posible cargar los contornos estatales');
+          const contours = await response.json() as VoronoiFeatureCollection;
+          if (contourAbortController.signal.aborted) return;
+          const lines: FeatureCollection<import('geojson').MultiLineString, Record<string, unknown>> = {
+            type: 'FeatureCollection',
+            features: contours.features.map((feature) => ({
+              type: 'Feature',
+              properties: feature.properties,
+              geometry: {
+                type: 'MultiLineString',
+                coordinates: feature.geometry.type === 'Polygon'
+                  ? feature.geometry.coordinates
+                  : feature.geometry.coordinates.flatMap((polygon) => polygon),
+              },
+            })),
+          };
+          (map.getSource('state-contour-lines') as maplibregl.GeoJSONSource).setData(lines);
+          map.once('idle', () => {
+            if (!contourAbortController.signal.aborted) setStateContoursReady(true);
+          });
+        }).catch((error: unknown) => {
+          if (!contourAbortController.signal.aborted) {
+            console.error(error);
+            setStateContoursReady(true);
+          }
+        });
+        map.on('click', 'state-contours-hit', (event) => {
+          if (map.queryRenderedFeatures(event.point, { layers: ['clues-circles'] }).length > 0) return;
+          const properties = event.features?.[0]?.properties;
+          if (!properties) return;
+          const content = document.createElement('div');
+          const heading = document.createElement('strong');
+          heading.textContent = String(properties.entidad ?? 'Sin entidad');
+          const detail = document.createElement('div');
+          detail.textContent = `Concurrente: ${String(properties.concurrente ?? 'Sin dato')}`;
+          content.append(heading, detail);
+          new maplibregl.Popup({ maxWidth: '260px' })
+            .setLngLat(event.lngLat).setDOMContent(content).addTo(map);
+        });
         map.addSource('selected-voronoi', {
           type: 'geojson',
           data: EMPTY_VORONOI,
@@ -613,12 +722,16 @@ function MapSection({ cluesGeo = [] }: {
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
           'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#D5B05B', 'No aceptada', '#98989A', '#D5B05B'], ['match', ['get', 'categoria'], 'IMB', '#9F536F', '#1A6B5E']],
-          'circle-opacity': 0.18, 'circle-stroke-width': 0,
+          'circle-opacity': 0, 'circle-stroke-width': 0,
+          'circle-opacity-transition': { duration: 0, delay: 0 },
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
           'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#A57F2C', 'No aceptada', '#98989A', '#A57F2C'], ['match', ['get', 'categoria'], 'IMB', '#611232', '#002F2A']],
-          'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
+          'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0,
+          'circle-stroke-opacity': 0,
+          'circle-opacity-transition': { duration: 0, delay: 0 },
+          'circle-stroke-opacity-transition': { duration: 0, delay: 0 },
         }});
 
         const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
@@ -668,10 +781,81 @@ function MapSection({ cluesGeo = [] }: {
     else map.on('load', removeCityLabels);
 
     return () => {
+      contourAbortController.abort();
       mapRef.current = null;
       map.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const updateVisibility = () => {
+      for (const layerId of [
+        'state-contours-hit',
+        ...Object.keys(STATE_CONTOUR_COLORS).map((entity) => `state-contours-outline-${entity}`),
+      ]) {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, 'visibility', showStateContours ? 'visible' : 'none');
+        }
+      }
+    };
+    if (map.isStyleLoaded()) updateVisibility();
+    else map.once('load', updateVisibility);
+    return () => { map.off('load', updateVisibility); };
+  }, [showStateContours]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !stateContoursReady) return;
+    let animationFrame = 0;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const initialEntry = !introCompleteRef.current;
+    const blackDuration = initialEntry ? 3000 : 0;
+    const contourDuration = showStateContours ? 1000 : 0;
+    const mapDuration = initialEntry ? 400 : 0;
+    const pointsStart = blackDuration + contourDuration + mapDuration;
+    const totalDuration = pointsStart + 250;
+    const startedAt = performance.now();
+    const drawContours = (timestamp: number) => {
+      const elapsed = reducedMotion ? totalDuration : timestamp - startedAt;
+      const progress = contourDuration === 0 ? 1
+        : Math.max(0, Math.min((elapsed - blackDuration) / contourDuration, 1));
+      const mapProgress = mapDuration === 0 ? 1
+        : Math.max(0, Math.min((elapsed - blackDuration - contourDuration) / mapDuration, 1));
+      const pointsProgress = Math.max(0, Math.min((elapsed - pointsStart) / 250, 1));
+      map.setPaintProperty('intro-backdrop', 'background-opacity', initialEntry ? 1 - mapProgress : 0);
+      map.setPaintProperty('clues-halo', 'circle-opacity', 0.18 * pointsProgress);
+      map.setPaintProperty('clues-circles', 'circle-opacity', 0.95 * pointsProgress);
+      map.setPaintProperty('clues-circles', 'circle-stroke-opacity', pointsProgress);
+      if (initialEntry) {
+        setIntroPhase(elapsed < blackDuration ? 'waiting'
+          : elapsed < blackDuration + contourDuration ? 'contours'
+          : elapsed < pointsStart ? 'map'
+          : elapsed < totalDuration ? 'points' : 'ready');
+      }
+      for (const [entity, color] of Object.entries(STATE_CONTOUR_COLORS)) {
+        const layerId = `state-contours-outline-${entity}`;
+        if (!map.getLayer(layerId)) continue;
+        const brightness = initialEntry ? 0.45 * (1 - mapProgress) : 0;
+        const channels = [1, 3, 5].map((offset) => {
+          const channel = parseInt(color.slice(offset, offset + 2), 16);
+          return Math.round(channel + (255 - channel) * brightness);
+        });
+        const drawColor = `rgb(${channels.join(',')})`;
+        map.setPaintProperty(layerId, 'line-gradient', progress >= 1
+          ? ['step', ['line-progress'], drawColor, 1, drawColor]
+          : ['step', ['line-progress'], drawColor, Math.max(progress, 0.000001), 'rgba(0, 0, 0, 0)']);
+      }
+      if (elapsed < totalDuration) {
+        animationFrame = requestAnimationFrame(drawContours);
+      } else if (initialEntry) {
+        introCompleteRef.current = true;
+      }
+    };
+    drawContours(startedAt);
+    return () => { cancelAnimationFrame(animationFrame); };
+  }, [institucion, csaStatus, showStateContours, stateContoursReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -988,6 +1172,16 @@ function MapSection({ cluesGeo = [] }: {
             </div>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:mr-3 sm:w-auto sm:gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-gray-600">
+              <input
+                type="checkbox"
+                checked={showStateContours}
+                onChange={(event) => setShowStateContours(event.target.checked)}
+                className="h-4 w-4 accent-emerald-700"
+              />
+              <Layers3 className="h-4 w-4" />
+              Contornos estatales
+            </label>
             <div className="flex max-w-full flex-wrap rounded-xl border border-gray-200 bg-gray-100 p-1">
               {(['IMO', 'IMB', 'CSA', 'TODAS'] as const).map((option) => (
                 <button
@@ -1028,7 +1222,11 @@ function MapSection({ cluesGeo = [] }: {
 
         {/* Mapa */}
         <div className="relative flex-1 overflow-hidden">
-          <div ref={mapContainerRef} className="absolute inset-0" />
+          <div
+            ref={mapContainerRef}
+            data-intro-phase={introPhase}
+            className={`absolute inset-0 bg-black ${introPhase === 'ready' ? '' : 'pointer-events-none'}`}
+          />
           {routePoints.length > 0 && (
             <div className="absolute left-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
               <div className="mb-2 flex items-center justify-between gap-3">
