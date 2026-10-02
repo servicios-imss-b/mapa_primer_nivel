@@ -570,8 +570,6 @@ function MapSection({ cluesGeo = [] }: {
   const [csaStatus, setCsaStatus] = useState<CsaStatusFilter>('TODAS');
   const [showStateContours, setShowStateContours] = useState(true);
   const [stateContoursReady, setStateContoursReady] = useState(false);
-  const introCompleteRef = useRef(false);
-  const [introPhase, setIntroPhase] = useState<'waiting' | 'contours' | 'map' | 'points' | 'ready'>('waiting');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
@@ -621,15 +619,6 @@ function MapSection({ cluesGeo = [] }: {
 
     const addLayers = () => {
         if (map.getSource('clues')) return;
-        map.addLayer({
-          id: 'intro-backdrop',
-          type: 'background',
-          paint: {
-            'background-color': '#000000',
-            'background-opacity': window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1,
-            'background-opacity-transition': { duration: 0, delay: 0 },
-          },
-        });
         map.addSource('state-contours', {
           type: 'geojson',
           data: `${import.meta.env.BASE_URL}contorno_estados.geojson`,
@@ -810,47 +799,27 @@ function MapSection({ cluesGeo = [] }: {
     if (!map || !stateContoursReady) return;
     let animationFrame = 0;
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const initialEntry = !introCompleteRef.current;
-    const blackDuration = initialEntry ? 3000 : 0;
     const contourDuration = showStateContours ? 1000 : 0;
-    const mapDuration = initialEntry ? 400 : 0;
-    const pointsStart = blackDuration + contourDuration + mapDuration;
+    const pointsStart = contourDuration;
     const totalDuration = pointsStart + 250;
     const startedAt = performance.now();
     const drawContours = (timestamp: number) => {
       const elapsed = reducedMotion ? totalDuration : timestamp - startedAt;
       const progress = contourDuration === 0 ? 1
-        : Math.max(0, Math.min((elapsed - blackDuration) / contourDuration, 1));
-      const mapProgress = mapDuration === 0 ? 1
-        : Math.max(0, Math.min((elapsed - blackDuration - contourDuration) / mapDuration, 1));
+        : Math.max(0, Math.min(elapsed / contourDuration, 1));
       const pointsProgress = Math.max(0, Math.min((elapsed - pointsStart) / 250, 1));
-      map.setPaintProperty('intro-backdrop', 'background-opacity', initialEntry ? 1 - mapProgress : 0);
       map.setPaintProperty('clues-halo', 'circle-opacity', 0.18 * pointsProgress);
       map.setPaintProperty('clues-circles', 'circle-opacity', 0.95 * pointsProgress);
       map.setPaintProperty('clues-circles', 'circle-stroke-opacity', pointsProgress);
-      if (initialEntry) {
-        setIntroPhase(elapsed < blackDuration ? 'waiting'
-          : elapsed < blackDuration + contourDuration ? 'contours'
-          : elapsed < pointsStart ? 'map'
-          : elapsed < totalDuration ? 'points' : 'ready');
-      }
       for (const [entity, color] of Object.entries(STATE_CONTOUR_COLORS)) {
         const layerId = `state-contours-outline-${entity}`;
         if (!map.getLayer(layerId)) continue;
-        const brightness = initialEntry ? 0.45 * (1 - mapProgress) : 0;
-        const channels = [1, 3, 5].map((offset) => {
-          const channel = parseInt(color.slice(offset, offset + 2), 16);
-          return Math.round(channel + (255 - channel) * brightness);
-        });
-        const drawColor = `rgb(${channels.join(',')})`;
         map.setPaintProperty(layerId, 'line-gradient', progress >= 1
-          ? ['step', ['line-progress'], drawColor, 1, drawColor]
-          : ['step', ['line-progress'], drawColor, Math.max(progress, 0.000001), 'rgba(0, 0, 0, 0)']);
+          ? ['step', ['line-progress'], color, 1, color]
+          : ['step', ['line-progress'], color, Math.max(progress, 0.000001), 'rgba(0, 0, 0, 0)']);
       }
       if (elapsed < totalDuration) {
         animationFrame = requestAnimationFrame(drawContours);
-      } else if (initialEntry) {
-        introCompleteRef.current = true;
       }
     };
     drawContours(startedAt);
@@ -1224,8 +1193,7 @@ function MapSection({ cluesGeo = [] }: {
         <div className="relative flex-1 overflow-hidden">
           <div
             ref={mapContainerRef}
-            data-intro-phase={introPhase}
-            className={`absolute inset-0 bg-black ${introPhase === 'ready' ? '' : 'pointer-events-none'}`}
+            className="absolute inset-0"
           />
           {routePoints.length > 0 && (
             <div className="absolute left-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
