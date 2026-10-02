@@ -14,9 +14,10 @@ import {
   ComposedChart,
   Line,
 } from 'recharts';
-import { Layers3, Building2, X, MapPin, Search, Route, Trash2 } from 'lucide-react';
+import { Layers3, Building2, X, MapPin, Search, Route, Trash2, Loader2 as LoaderCircle } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
+import type { OsmSceneController, OsmSceneStatus } from '../osmScene';
 import type { DashboardStats, CluesGeoItem, EntidadChart, InternetPieItem, TopFaltanteChart } from '../types';
 
 interface ChartsProps {
@@ -514,32 +515,14 @@ interface OsrmRouteResponse {
 
 type VoronoiFeatureCollection = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
 
-const STATE_CONTOUR_COLORS: Record<string, string> = {
-  'Baja California': '#0072B2',
-  'Baja California Sur': '#B45309',
-  'Campeche': '#047857',
-  'Chiapas': '#BE123C',
-  'Ciudad de México': '#6D28D9',
-  'Colima': '#DB2777',
-  'Guerrero': '#C2410C',
-  'Hidalgo': '#4338CA',
-  'México': '#A21CAF',
-  'Michoacán': '#3F6212',
-  'Morelos': '#B91C1C',
-  'Nayarit': '#D97706',
-  'Oaxaca': '#7E22CE',
-  'Puebla': '#0F766E',
-  'Quintana Roo': '#A16207',
-  'San Luis Potosí': '#9D174D',
-  'Sinaloa': '#15803D',
-  'Sonora': '#92400E',
-  'Tabasco': '#1D4ED8',
-  'Tamaulipas': '#86198F',
-  'Tlaxcala': '#4D7C0F',
-  'Veracruz': '#9F1239',
-  'Yucatán': '#155E75',
-  'Zacatecas': '#5B21B6',
-};
+const STATE_CONTOUR_COLOR = '#15803D';
+const STATE_CONTOUR_ENTITIES = [
+  'Baja California', 'Baja California Sur', 'Campeche', 'Chiapas',
+  'Ciudad de México', 'Colima', 'Guerrero', 'Hidalgo', 'México',
+  'Michoacán', 'Morelos', 'Nayarit', 'Oaxaca', 'Puebla', 'Quintana Roo',
+  'San Luis Potosí', 'Sinaloa', 'Sonora', 'Tabasco', 'Tamaulipas',
+  'Tlaxcala', 'Veracruz', 'Yucatán', 'Zacatecas',
+];
 
 const EMPTY_VORONOI: VoronoiFeatureCollection = {
   type: 'FeatureCollection',
@@ -568,8 +551,13 @@ function MapSection({ cluesGeo = [] }: {
   const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const [institucion, setInstitucion] = useState<InstitutionFilter>('TODAS');
   const [csaStatus, setCsaStatus] = useState<CsaStatusFilter>('TODAS');
-  const [showStateContours, setShowStateContours] = useState(true);
+  const showStateContours = true;
   const [stateContoursReady, setStateContoursReady] = useState(false);
+  const [contourReplay, setContourReplay] = useState(0);
+  const osmSceneRef = useRef<OsmSceneController | null>(null);
+  const [osmStatus, setOsmStatus] = useState<OsmSceneStatus>({ phase: 'overview', buildings: 0, roads: 0, estimated: 0 });
+  const [mapLoading, setMapLoading] = useState(true);
+  const [pitch, setPitch] = useState<0 | 60>(0);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
@@ -605,23 +593,59 @@ function MapSection({ cluesGeo = [] }: {
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
+    setStateContoursReady(false);
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: 'https://tiles.openfreemap.org/styles/positron',
+      style: 'https://tiles.openfreemap.org/styles/liberty',
       center: [-102, 23.5],
       zoom: 4.8,
+      pitch: 0,
+      pitchWithRotate: false,
+      touchPitch: false,
+      maxBounds: [[-120, 13], [-85, 34]],
       attributionControl: false,
     });
     mapRef.current = map;
     const contourAbortController = new AbortController();
+    let sceneModuleLoading = false;
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+    map.on('sourcedataloading', (event) => {
+      if (event.sourceId === 'openmaptiles') setMapLoading(true);
+    });
+    map.on('sourcedata', (event) => {
+      if (event.sourceId === 'openmaptiles' && map.isSourceLoaded('openmaptiles')) setMapLoading(false);
+    });
+    map.on('idle', () => setMapLoading(false));
+    map.on('pitch', () => {
+      const currentPitch = map.getPitch();
+      if (currentPitch === 0 || currentPitch === 60) setPitch(currentPitch);
+    });
 
     const addLayers = () => {
         if (map.getSource('clues')) return;
+        const spanishName: maplibregl.ExpressionSpecification = [
+          'coalesce', ['get', 'name:es'], ['get', 'name_es'], ['get', 'name'], ['get', 'name:latin'], '',
+        ];
+        const translateNames = (expression: unknown): unknown => {
+          if (!Array.isArray(expression)) return expression;
+          if (expression[0] === 'get' && ['name_en', 'name:en', 'name', 'name:latin'].includes(expression[1])) {
+            return spanishName;
+          }
+          return expression.map(translateNames);
+        };
+        for (const layer of map.getStyle().layers) {
+          if (layer.type === 'symbol' && layer.layout?.['text-field']) {
+            map.setLayoutProperty(layer.id, 'text-field', translateNames(layer.layout['text-field']));
+          }
+        }
+        if (map.getLayer('building-3d')) {
+          map.setPaintProperty('building-3d', 'fill-extrusion-height', ['coalesce', ['get', 'render_height'], 8]);
+          map.setPaintProperty('building-3d', 'fill-extrusion-base', ['coalesce', ['get', 'render_min_height'], 0]);
+        }
         map.addSource('state-contours', {
           type: 'geojson',
-          data: `${import.meta.env.BASE_URL}contorno_estados.geojson`,
+          data: { type: 'FeatureCollection', features: [] },
         });
         map.addLayer({ id: 'state-contours-hit', type: 'fill', source: 'state-contours', paint: {
           'fill-opacity': 0,
@@ -631,26 +655,27 @@ function MapSection({ cluesGeo = [] }: {
           lineMetrics: true,
           data: { type: 'FeatureCollection', features: [] },
         });
-        for (const [entity, color] of Object.entries(STATE_CONTOUR_COLORS)) {
+        for (const entity of STATE_CONTOUR_ENTITIES) {
           map.addLayer({
             id: `state-contours-outline-${entity}`,
             type: 'line',
             source: 'state-contour-lines',
             filter: ['==', ['get', 'entidad'], entity],
             paint: {
-              'line-color': color,
+              'line-color': STATE_CONTOUR_COLOR,
               'line-gradient': ['step', ['line-progress'], 'rgba(0, 0, 0, 0)', 1, 'rgba(0, 0, 0, 0)'],
-              'line-width': 2.2,
+              'line-width': 3.2,
               'line-opacity': 0.95,
             },
           });
         }
-        void fetch(`${import.meta.env.BASE_URL}contorno_estados.geojson`, {
+        void fetch(`${import.meta.env.BASE_URL}contorno_estados_web.geojson`, {
           signal: contourAbortController.signal,
         }).then(async (response) => {
           if (!response.ok) throw new Error('No fue posible cargar los contornos estatales');
           const contours = await response.json() as VoronoiFeatureCollection;
           if (contourAbortController.signal.aborted) return;
+          (map.getSource('state-contours') as maplibregl.GeoJSONSource).setData(contours);
           const lines: FeatureCollection<import('geojson').MultiLineString, Record<string, unknown>> = {
             type: 'FeatureCollection',
             features: contours.features.map((feature) => ({
@@ -664,10 +689,14 @@ function MapSection({ cluesGeo = [] }: {
               },
             })),
           };
-          (map.getSource('state-contour-lines') as maplibregl.GeoJSONSource).setData(lines);
-          map.once('idle', () => {
+          const contoursLoaded = (event: maplibregl.MapSourceDataEvent) => {
+            if (event.sourceId !== 'state-contour-lines' || !map.isSourceLoaded('state-contour-lines')) return;
+            map.off('sourcedata', contoursLoaded);
             if (!contourAbortController.signal.aborted) setStateContoursReady(true);
-          });
+          };
+          map.on('sourcedata', contoursLoaded);
+          contourAbortController.signal.addEventListener('abort', () => map.off('sourcedata', contoursLoaded), { once: true });
+          (map.getSource('state-contour-lines') as maplibregl.GeoJSONSource).setData(lines);
         }).catch((error: unknown) => {
           if (!contourAbortController.signal.aborted) {
             console.error(error);
@@ -709,19 +738,36 @@ function MapSection({ cluesGeo = [] }: {
         });
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
-          'circle-radius': 9,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 9, 12, 13, 16, 18, 20, 23],
+          'circle-pitch-alignment': 'viewport',
+          'circle-pitch-scale': 'viewport',
           'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#D5B05B', 'No aceptada', '#98989A', '#D5B05B'], ['match', ['get', 'categoria'], 'IMB', '#9F536F', '#1A6B5E']],
           'circle-opacity': 0, 'circle-stroke-width': 0,
           'circle-opacity-transition': { duration: 0, delay: 0 },
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
-          'circle-radius': 5,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 5, 12, 8, 16, 12, 20, 16],
+          'circle-pitch-alignment': 'viewport',
+          'circle-pitch-scale': 'viewport',
           'circle-color': ['case', ['==', ['get', 'categoria'], 'CSA'], ['match', ['get', 'accion'], 'Aceptada', '#A57F2C', 'No aceptada', '#98989A', '#A57F2C'], ['match', ['get', 'categoria'], 'IMB', '#611232', '#002F2A']],
-          'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0,
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 4, 1.5, 16, 2, 20, 2.5], 'circle-stroke-color': '#ffffff', 'circle-opacity': 0,
           'circle-stroke-opacity': 0,
           'circle-opacity-transition': { duration: 0, delay: 0 },
           'circle-stroke-opacity-transition': { duration: 0, delay: 0 },
         }});
+        const ensureOsmScene = () => {
+          if (map.getZoom() < 15 || osmSceneRef.current || sceneModuleLoading) return;
+          sceneModuleLoading = true;
+          setOsmStatus({ phase: 'loading', buildings: 0, roads: 0, estimated: 0 });
+          void import('../osmScene').then(({ attachOsmScene }) => {
+            if (mapRef.current !== map) return;
+            osmSceneRef.current = attachOsmScene(map, setOsmStatus);
+          }).catch(() => {
+            if (mapRef.current === map) setOsmStatus({ phase: 'error', buildings: 0, roads: 0, estimated: 0, message: 'No se pudo iniciar la escena OSM.' });
+          }).finally(() => { sceneModuleLoading = false; });
+        };
+        map.on('zoomend', ensureOsmScene);
+        ensureOsmScene();
 
         const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
 
@@ -756,21 +802,12 @@ function MapSection({ cluesGeo = [] }: {
     };
 
     if (map.isStyleLoaded()) addLayers();
-    else map.on('load', addLayers);
-
-    // Quitar etiquetas de ciudades/pueblos del estilo base
-    const removeCityLabels = () => {
-      const style = map.getStyle();
-      if (!style?.layers) return;
-      style.layers
-        .filter((l) => /city|town|village|suburb|place|hamlet/i.test(l.id))
-        .forEach((l) => { try { map.removeLayer(l.id); } catch { /* ya no existe */ } });
-    };
-    if (map.isStyleLoaded()) removeCityLabels();
-    else map.on('load', removeCityLabels);
+    else map.on('style.load', addLayers);
 
     return () => {
       contourAbortController.abort();
+      osmSceneRef.current?.dispose();
+      osmSceneRef.current = null;
       mapRef.current = null;
       map.remove();
     };
@@ -782,7 +819,7 @@ function MapSection({ cluesGeo = [] }: {
     const updateVisibility = () => {
       for (const layerId of [
         'state-contours-hit',
-        ...Object.keys(STATE_CONTOUR_COLORS).map((entity) => `state-contours-outline-${entity}`),
+        ...STATE_CONTOUR_ENTITIES.map((entity) => `state-contours-outline-${entity}`),
       ]) {
         if (map.getLayer(layerId)) {
           map.setLayoutProperty(layerId, 'visibility', showStateContours ? 'visible' : 'none');
@@ -790,16 +827,16 @@ function MapSection({ cluesGeo = [] }: {
       }
     };
     if (map.isStyleLoaded()) updateVisibility();
-    else map.once('load', updateVisibility);
-    return () => { map.off('load', updateVisibility); };
+    else map.once('style.load', updateVisibility);
+    return () => { map.off('style.load', updateVisibility); };
   }, [showStateContours]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !stateContoursReady) return;
+    if (!map || !stateContoursReady || !map.getLayer('clues-circles')) return;
     let animationFrame = 0;
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const contourDuration = showStateContours ? 1000 : 0;
+    const contourDuration = showStateContours ? 1400 : 0;
     const pointsStart = contourDuration;
     const totalDuration = pointsStart + 250;
     const startedAt = performance.now();
@@ -811,12 +848,12 @@ function MapSection({ cluesGeo = [] }: {
       map.setPaintProperty('clues-halo', 'circle-opacity', 0.18 * pointsProgress);
       map.setPaintProperty('clues-circles', 'circle-opacity', 0.95 * pointsProgress);
       map.setPaintProperty('clues-circles', 'circle-stroke-opacity', pointsProgress);
-      for (const [entity, color] of Object.entries(STATE_CONTOUR_COLORS)) {
+      for (const entity of STATE_CONTOUR_ENTITIES) {
         const layerId = `state-contours-outline-${entity}`;
         if (!map.getLayer(layerId)) continue;
         map.setPaintProperty(layerId, 'line-gradient', progress >= 1
-          ? ['step', ['line-progress'], color, 1, color]
-          : ['step', ['line-progress'], color, Math.max(progress, 0.000001), 'rgba(0, 0, 0, 0)']);
+          ? ['step', ['line-progress'], STATE_CONTOUR_COLOR, 1, STATE_CONTOUR_COLOR]
+          : ['step', ['line-progress'], STATE_CONTOUR_COLOR, Math.max(progress, 0.000001), 'rgba(0, 0, 0, 0)']);
       }
       if (elapsed < totalDuration) {
         animationFrame = requestAnimationFrame(drawContours);
@@ -824,7 +861,7 @@ function MapSection({ cluesGeo = [] }: {
     };
     drawContours(startedAt);
     return () => { cancelAnimationFrame(animationFrame); };
-  }, [institucion, csaStatus, showStateContours, stateContoursReady]);
+  }, [institucion, csaStatus, showStateContours, stateContoursReady, contourReplay]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -857,9 +894,9 @@ function MapSection({ cluesGeo = [] }: {
     };
 
     if (map.isStyleLoaded()) updatePoints();
-    else map.once('load', updatePoints);
+    else map.once('style.load', updatePoints);
 
-    return () => map.off('load', updatePoints);
+    return () => map.off('style.load', updatePoints);
   }, [unidades]);
 
   useEffect(() => {
@@ -1127,7 +1164,7 @@ function MapSection({ cluesGeo = [] }: {
         )}
       </div>
 
-      <section className="card flex w-full flex-col overflow-hidden" style={{ height: '72vh', minHeight: '560px', maxHeight: '760px' }}>
+      <section className="flex w-full flex-col overflow-hidden border-y border-gray-200 bg-white" style={{ height: '78vh', minHeight: '640px', maxHeight: '900px' }}>
 
         {/* Header */}
         <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
@@ -1136,27 +1173,31 @@ function MapSection({ cluesGeo = [] }: {
               <MapPin className="h-5 w-5" strokeWidth={2.2} />
             </div>
             <div>
-              <h3 className="text-base font-bold text-gray-800">Cobertura CLUES — Mapa Nacional</h3>
-              <p className="mt-0.5 text-xs text-gray-400">Unidades de primer nivel distribuidas por institución</p>
+              <h3 className="text-base font-bold text-gray-800">México · OpenStreetMap</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Edificios, carreteras y unidades de salud</p>
             </div>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:mr-3 sm:w-auto sm:gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-gray-600">
-              <input
-                type="checkbox"
-                checked={showStateContours}
-                onChange={(event) => setShowStateContours(event.target.checked)}
-                className="h-4 w-4 accent-emerald-700"
-              />
-              <Layers3 className="h-4 w-4" />
-              Contornos estatales
-            </label>
+            <fieldset className="flex rounded-md border border-gray-200 bg-gray-100 p-1">
+              <legend className="sr-only">Modo de vista</legend>
+              {([0, 60] as const).map((option) => (
+                <label key={option} className="cursor-pointer">
+                  <input type="radio" name="map-view-mode" checked={pitch === option} value={option}
+                    onChange={() => { setPitch(option); mapRef.current?.setPitch(option); }}
+                    className="peer sr-only" />
+                  <span className="block min-w-12 rounded px-3 py-1.5 text-center text-xs font-bold text-gray-500 peer-checked:bg-white peer-checked:text-emerald-800 peer-checked:shadow-sm peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-emerald-700">
+                    {option}°
+                  </span>
+                </label>
+              ))}
+            </fieldset>
             <div className="flex max-w-full flex-wrap rounded-xl border border-gray-200 bg-gray-100 p-1">
               {(['IMO', 'IMB', 'CSA', 'TODAS'] as const).map((option) => (
                 <button
                   key={option}
                   onClick={() => {
                     setInstitucion(option);
+                    setContourReplay((current) => current + 1);
                     setCsaStatus('TODAS');
                     setSelectedUnit(null);
                     setRoutePoints([]);
@@ -1193,8 +1234,15 @@ function MapSection({ cluesGeo = [] }: {
         <div className="relative flex-1 overflow-hidden">
           <div
             ref={mapContainerRef}
+            data-scene-phase={osmStatus.phase}
             className="absolute inset-0"
           />
+          {(mapLoading || osmStatus.phase === 'loading') && (
+            <div role="status" className="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-md border border-gray-200 bg-white/95 px-3 py-2 text-xs text-gray-600 shadow-sm">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              {osmStatus.phase === 'loading' ? 'Generando escena OSM...' : 'Cargando cartografía...'}
+            </div>
+          )}
           {routePoints.length > 0 && (
             <div className="absolute left-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
               <div className="mb-2 flex items-center justify-between gap-3">
@@ -1234,6 +1282,20 @@ function MapSection({ cluesGeo = [] }: {
 
         {/* Footer */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-xs text-gray-500 sm:px-6">
+          <span className="text-[10px] text-gray-500">
+            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" className="hover:underline">© OpenStreetMap</a>
+            {' · '}
+            <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener noreferrer" className="hover:underline">OpenMapTiles</a>
+            {' · '}
+            <a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer" className="hover:underline">OpenFreeMap</a>
+          </span>
+          <span role="status" className="text-gray-600">
+            {osmStatus.phase === 'overview' ? 'OpenStreetMap · México'
+              : osmStatus.phase === 'ready' ? `${osmStatus.buildings.toLocaleString('es-MX')} edificios · ${osmStatus.roads.toLocaleString('es-MX')} carreteras`
+              : osmStatus.phase === 'loading' ? 'Cargando escena'
+              : osmStatus.message}
+          </span>
+          {osmStatus.estimated > 0 && <span title="Alturas aproximadas cuando no existe una altura en las teselas">{osmStatus.estimated.toLocaleString('es-MX')} alturas estimadas</span>}
           <span className="font-semibold text-gray-600">Institución:</span>
           {(institucion === 'IMO' || institucion === 'TODAS') && (
             <span className="flex items-center gap-1.5">
