@@ -65,16 +65,6 @@ interface StatCardDef {
 
 const STAT_CARDS: StatCardDef[] = [
   {
-    icon: Layers3,
-    label: 'TOTAL CLUES',
-    key: 'total',
-    bg: 'bg-emerald-50',
-    iconBg: 'bg-emerald-100',
-    iconColor: 'text-emerald-600',
-    valueColor: 'text-emerald-700',
-    border: 'border-emerald-200',
-  },
-  {
     icon: Building2,
     label: 'IMSS BIENESTAR (IMB)',
     key: 'IMB',
@@ -88,21 +78,21 @@ const STAT_CARDS: StatCardDef[] = [
     icon: MapPin,
     label: 'IMSS ORDINARIO (IMO)',
     key: 'IMO',
-    bg: 'bg-amber-50',
-    iconBg: 'bg-amber-100',
-    iconColor: 'text-[#002F2A]',
-    valueColor: 'text-[#002F2A]',
-    border: 'border-amber-200',
+    bg: 'bg-emerald-50',
+    iconBg: 'bg-emerald-100',
+    iconColor: 'text-emerald-600',
+    valueColor: 'text-emerald-700',
+    border: 'border-emerald-200',
   },
   {
     icon: Building2,
     label: 'CASAS DE SALUD (CSA)',
     key: 'CSA',
-    bg: 'bg-[#FBF7ED]',
-    iconBg: 'bg-[#EFE4C8]',
+    bg: 'bg-white',
+    iconBg: 'bg-amber-100',
     iconColor: 'text-[#A57F2C]',
-    valueColor: 'text-[#A57F2C]',
-    border: 'border-[#E2D2AA]',
+    valueColor: 'text-gray-900',
+    border: 'border-amber-200',
   },
 ];
 
@@ -110,14 +100,19 @@ function StatCard({
   def,
   value,
   helper,
+  breakdown,
 }: {
   def: StatCardDef;
   value: number;
   helper?: string;
+  breakdown?: { accepted: number; rejected: number };
 }) {
   const { icon: Icon, label, bg, iconBg, iconColor, valueColor, border } = def;
+  const split = def.key === 'CSA' && breakdown;
   return (
-    <div className={`group relative overflow-hidden rounded-2xl border p-5 transition-all duration-300 hover:scale-[1.03] hover:shadow-lg ${border} ${bg}`}>
+    <div data-stat-card={def.key}
+      style={split ? { backgroundImage: 'linear-gradient(90deg, #FFFBEB 50%, rgba(152, 152, 154, 0.18) 50%)' } : undefined}
+      className={`group relative overflow-hidden rounded-2xl border p-5 transition-all duration-300 hover:scale-[1.03] hover:shadow-lg ${border} ${bg}`}>
       <div className="absolute -right-4 -top-4 opacity-10 transition-transform duration-500 group-hover:scale-125 group-hover:opacity-20">
         <Icon className="h-20 w-20" />
       </div>
@@ -127,10 +122,21 @@ function StatCard({
         </div>
       </div>
       <p className="relative mb-1 text-[10px] font-bold uppercase tracking-widest opacity-70">
-        <span className={valueColor === 'text-white' ? 'text-white/70' : 'text-gray-500'}>{label}</span>
+        <span className={valueColor === 'text-white' ? 'text-white' : split ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
       </p>
       <p className={`relative text-3xl font-black tabular-nums ${valueColor}`}>{value.toLocaleString('es-MX')}</p>
-      {helper ? <p className="mt-1 text-xs text-gray-500">{helper}</p> : null}
+      {split ? (
+        <div className="relative mt-3 grid grid-cols-2 gap-4 text-gray-900">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold">Aceptadas</p>
+            <p className="text-lg font-bold tabular-nums">{breakdown.accepted.toLocaleString('es-MX')}</p>
+          </div>
+          <div className="min-w-0 pl-2">
+            <p className="text-xs font-semibold">No aceptadas</p>
+            <p className="text-lg font-bold tabular-nums">{breakdown.rejected.toLocaleString('es-MX')}</p>
+          </div>
+        </div>
+      ) : helper ? <p className={`relative mt-1 text-xs ${valueColor === 'text-white' ? 'text-white/80' : 'text-gray-500'}`}>{helper}</p> : null}
     </div>
   );
 }
@@ -1367,13 +1373,14 @@ export function StatCards({
   return (
     <>
       {/* Cards de métricas */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {STAT_CARDS.map((def) => (
           <StatCard
             key={def.key}
             def={def}
             value={values[def.key].value}
             helper={values[def.key].helper}
+            breakdown={def.key === 'CSA' ? { accepted: casasAceptadas, rejected: casasNoAceptadas } : undefined}
           />
         ))}
       </div>
