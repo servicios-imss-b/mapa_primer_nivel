@@ -126,6 +126,7 @@ export default function App() {
       const result = await response.json() as { ok: boolean; error?: string };
       if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo verificar la contraseña.');
       setAdminEnabled(true);
+      setAdminPanelOpen(false);
     } catch (err) {
       setAdminError(err instanceof Error ? err.message : 'No se pudo verificar la contraseña.');
     } finally {
@@ -177,8 +178,6 @@ export default function App() {
   }
   function closeAdminPanel() {
     setAdminPanelOpen(false);
-    setAdminEnabled(false);
-    setAdminPassword('');
     setAdminError('');
   }
 
@@ -410,10 +409,7 @@ export default function App() {
               <button type="button" onClick={closeAdminPanel} className="rounded px-2 py-1 text-sm text-gray-500 hover:bg-gray-100">Cerrar</button>
             </div>
             {adminEnabled ? (
-              <div className="space-y-4">
-                <p role="status" className="text-sm text-emerald-800">Acceso activo. Ya puedes eliminar puntos guardados.</p>
-                <button type="button" onClick={closeAdminPanel} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cerrar sesión de administrador</button>
-              </div>
+              <p role="status" className="text-sm text-emerald-800">Acceso activo. Ya puedes eliminar puntos guardados.</p>
             ) : (
               <form onSubmit={verifyAdminPassword} className="space-y-4">
                 <label className="block text-sm font-medium text-gray-700">
