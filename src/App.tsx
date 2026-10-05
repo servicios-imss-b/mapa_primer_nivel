@@ -4,6 +4,7 @@ import type { AppSection } from './components/Header';
 import { StatCards } from './components/Charts';
 import { ProposalSection } from './components/ProposalSection';
 import { cargarTablasFormulario } from './data';
+import { loadProposals, verifyAdminPassword as checkAdminPassword } from './proposalsApi';
 import type { DashboardStats, DataRow, EntidadChart, InternetPieItem, TopFaltanteChart, CluesGeoItem } from './types';
 
 function toText(value: unknown): string {
@@ -118,13 +119,7 @@ export default function App() {
     setAdminLoading(true);
     setAdminError('');
     try {
-      const response = await fetch('/api/proposals/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: adminPassword }),
-      });
-      const result = await response.json() as { ok: boolean; error?: string };
-      if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo verificar la contraseña.');
+      await checkAdminPassword(adminPassword);
       setAdminEnabled(true);
       setAdminPanelOpen(false);
     } catch (err) {
@@ -136,18 +131,7 @@ export default function App() {
 
   async function refreshAcceptedProposalUnits() {
     try {
-      const response = await fetch('/api/proposals', { cache: 'no-store' });
-      if (!response.ok) throw new Error('No se pudieron cargar las propuestas aceptadas.');
-      const proposals = await response.json() as Array<{
-        id: string;
-        nombre_punto: string;
-        clues: string;
-        institucion: string;
-        latitud: number;
-        longitud: number;
-        estado: string;
-        estatus_revision: string;
-      }>;
+      const proposals = await loadProposals();
       setAcceptedProposalUnits(proposals
         .filter((proposal) => proposal.estatus_revision === 'Aceptada'
           && ['IMO', 'IMB', 'CSA'].includes(proposal.institucion)

@@ -1,6 +1,8 @@
 name: Deploy to GitHub Pages
 
 on:
+  push:
+    branches: [main]
   deployment_status:
   workflow_dispatch:
 
@@ -15,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.performed_via_github_app.slug == 'github-pages')
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.performed_via_github_app.slug == 'github-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

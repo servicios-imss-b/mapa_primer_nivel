@@ -18,6 +18,15 @@ const HEADERS = [
 function doGet(event) {
   try {
     const callback = event && event.parameter ? event.parameter.callback : '';
+    const adminNonce = event && event.parameter ? safeText_(event.parameter.adminNonce, 120) : '';
+    if (adminNonce) {
+      const cache = CacheService.getScriptCache();
+      const cacheKey = 'admin_verify_' + adminNonce;
+      const cachedResult = cache.get(cacheKey);
+      if (!cachedResult) return output_({ pending: true }, callback);
+      cache.remove(cacheKey);
+      return output_(JSON.parse(cachedResult), callback);
+    }
     return output_({ ok: true, options: readOptions_() }, callback);
   } catch (error) {
     return output_({ ok: false, error: String(error.message || error) });
@@ -29,8 +38,20 @@ function doPost(event) {
   try {
     const payload = JSON.parse(event && event.postData ? event.postData.contents : '{}');
     if (payload.action === 'verify-admin') {
-      assertAdminPassword_(payload.password);
-      return output_({ ok: true });
+      const nonce = safeText_(payload.nonce, 120);
+      if (!nonce) throw new Error('No se recibió el identificador de verificación.');
+      const cacheKey = 'admin_verify_' + nonce;
+      try {
+        assertAdminPassword_(payload.password);
+        CacheService.getScriptCache().put(cacheKey, JSON.stringify({ ok: true }), 60);
+        return output_({ ok: true });
+      } catch (error) {
+        CacheService.getScriptCache().put(cacheKey, JSON.stringify({
+          ok: false,
+          error: String(error.message || error),
+        }), 60);
+        throw error;
+      }
     }
     if (payload.action === 'delete') {
       assertAdminPassword_(payload.password);
@@ -179,7 +200,7 @@ function output_(payload, callback) {
 
 function safeText_(value, maxLength) {
   const text = String(value == null ? '' : value).trim().slice(0, maxLength);
-  return '=+@-'.indexOf(text.charAt(0)) >= 0 ? "'" + text : text;
+  return text && '=+@-'.indexOf(text.charAt(0)) >= 0 ? "'" + text : text;
 }
 
 function assertAdminPassword_(providedPassword) {

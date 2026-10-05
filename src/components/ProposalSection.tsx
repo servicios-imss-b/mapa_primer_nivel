@@ -3,6 +3,7 @@ import { Check, MapPin, RefreshCw, Trash2 } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Point, Polygon } from 'geojson';
 import mexicoStatesGeoJSON from '../assets/mexico-states.json';
+import { loadProposals, moderateProposal, refreshProposals, saveProposal } from '../proposalsApi';
 import type { CluesGeoItem } from '../types';
 
 interface ProposalPoint {
@@ -21,26 +22,6 @@ interface ProposalDraft {
   coordinateSource: string;
   status: string;
   point: ProposalPoint;
-}
-
-interface StoredProposal {
-  id: string;
-  nombre_solicitante: string;
-  usuario: string;
-  nombre_punto: string;
-  clues: string;
-  institucion: string;
-  latitud: number;
-  longitud: number;
-  estado: string;
-  estatus_revision: string;
-  fuente_coordenadas: string;
-}
-
-interface RefreshResponse {
-  ok: boolean;
-  count?: number;
-  error?: string;
 }
 
 const EMPTY_POINTS: FeatureCollection<Point> = {
@@ -73,9 +54,7 @@ function getGeometryBounds(geometry: Polygon | MultiPolygon): maplibregl.LngLatB
 }
 
 async function loadSavedOptions(): Promise<ProposalDraft[]> {
-  const response = await fetch('/api/proposals', { cache: 'no-store' });
-  if (!response.ok) throw new Error('No se pudieron leer las opciones guardadas localmente.');
-  const rows = await response.json() as StoredProposal[];
+  const rows = await loadProposals();
   return rows.map((option) => ({
     id: option.id,
     name: option.nombre_solicitante,
@@ -88,23 +67,6 @@ async function loadSavedOptions(): Promise<ProposalDraft[]> {
     status: option.estatus_revision,
     point: { lat: Number(option.latitud), lng: Number(option.longitud) },
   }));
-}
-
-async function refreshSavedOptions(): Promise<number> {
-  const response = await fetch('/api/proposals/refresh', { method: 'POST' });
-  const result = await response.json() as RefreshResponse;
-  if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo actualizar el Parquet.');
-  return result.count ?? 0;
-}
-
-async function sendProposal(option: Omit<StoredProposal, 'id' | 'estatus_revision' | 'fecha_registro'>): Promise<void> {
-  const response = await fetch('/api/proposals', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ option }),
-  });
-  const result = await response.json() as { ok: boolean; error?: string };
-  if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo guardar la opción.');
 }
 
 export function ProposalSection({
@@ -362,7 +324,7 @@ export function ProposalSection({
     setOptionsError('');
     setRefreshMessage('');
     try {
-      const count = await refreshSavedOptions();
+      const count = await refreshProposals();
       setDrafts(await loadSavedOptions());
       await onOptionsUpdated();
       setRefreshMessage(`Base actualizada: ${count.toLocaleString('es-MX')} opciones.`);
@@ -382,13 +344,7 @@ export function ProposalSection({
     setDeletingId(option.id);
     setOptionsError('');
     try {
-      const response = await fetch('/api/proposals/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: option.id, password: adminPassword }),
-      });
-      const result = await response.json() as { ok: boolean; error?: string };
-      if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo eliminar el punto.');
+      await moderateProposal('delete', option.id, adminPassword);
       setDrafts(await loadSavedOptions());
       await onOptionsUpdated();
       setConfirmDeleteId('');
@@ -404,13 +360,7 @@ export function ProposalSection({
     setAcceptingId(option.id);
     setOptionsError('');
     try {
-      const response = await fetch('/api/proposals/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: option.id, password: adminPassword }),
-      });
-      const result = await response.json() as { ok: boolean; error?: string };
-      if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo aceptar el punto.');
+      await moderateProposal('accept', option.id, adminPassword);
       setDrafts(await loadSavedOptions());
       await onOptionsUpdated();
     } catch (error) {
@@ -471,7 +421,7 @@ export function ProposalSection({
       fuente_coordenadas: coordinateSource,
     };
     try {
-      await sendProposal(option);
+      await saveProposal(option);
       setRefreshMessage('Opción guardada. Para ver su punto nuevo, pulse Actualizar.');
       setName('');
       setUsername('');
