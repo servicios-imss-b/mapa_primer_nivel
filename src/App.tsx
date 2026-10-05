@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Header } from './components/Header';
+import type { AppSection } from './components/Header';
 import { StatCards } from './components/Charts';
+import { ProposalSection } from './components/ProposalSection';
 import { cargarTablasFormulario } from './data';
 import type { DashboardStats, DataRow, EntidadChart, InternetPieItem, TopFaltanteChart, CluesGeoItem } from './types';
 
@@ -91,6 +93,13 @@ function formatCellValue(value: unknown, key?: string): string {
 }
 
 export default function App() {
+  const [activeSection, setActiveSection] = useState<AppSection>('mapa');
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminEnabled, setAdminEnabled] = useState(false);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [baseClues, setBaseClues] = useState<string[]>([]);
@@ -102,11 +111,92 @@ export default function App() {
   const [resumen, setResumen] = useState<DataRow[]>([]);
   const [cluesGeo, setCluesGeo] = useState<CluesGeoItem[]>([]);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [acceptedProposalUnits, setAcceptedProposalUnits] = useState<CluesGeoItem[]>([]);
+
+  async function verifyAdminPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAdminLoading(true);
+    setAdminError('');
+    try {
+      const response = await fetch('/api/proposals/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: adminPassword }),
+      });
+      const result = await response.json() as { ok: boolean; error?: string };
+      if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo verificar la contraseña.');
+      setAdminEnabled(true);
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'No se pudo verificar la contraseña.');
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function refreshAcceptedProposalUnits() {
+    try {
+      const response = await fetch('/api/proposals', { cache: 'no-store' });
+      if (!response.ok) throw new Error('No se pudieron cargar las propuestas aceptadas.');
+      const proposals = await response.json() as Array<{
+        id: string;
+        nombre_punto: string;
+        clues: string;
+        institucion: string;
+        latitud: number;
+        longitud: number;
+        estado: string;
+        estatus_revision: string;
+      }>;
+      setAcceptedProposalUnits(proposals
+        .filter((proposal) => proposal.estatus_revision === 'Aceptada'
+          && ['IMO', 'IMB', 'CSA'].includes(proposal.institucion)
+          && Number.isFinite(proposal.latitud)
+          && Number.isFinite(proposal.longitud))
+        .map((proposal) => {
+          const institution = proposal.institucion as CluesGeoItem['clave_de_la_institucion'];
+          const clues = proposal.clues || proposal.id;
+          return {
+            clues,
+            id_temp_sus: institution === 'CSA' ? clues : undefined,
+            clave_de_la_institucion: institution,
+            accion: 'Aceptada',
+            nombre_de_la_unidad: proposal.nombre_punto,
+            entidad: proposal.estado,
+            municipio: '',
+            localidad: '',
+            total_consultorios: null,
+            poblacion_por_consultorio: null,
+            consulta_general: null,
+            lat: Number(proposal.latitud),
+            lng: Number(proposal.longitud),
+          };
+        }));
+    } catch {
+      setAcceptedProposalUnits([]);
+    }
+  }
+  function closeAdminPanel() {
+    setAdminPanelOpen(false);
+    setAdminEnabled(false);
+    setAdminPassword('');
+    setAdminError('');
+  }
+
+  useEffect(() => {
+    if (activeSection !== 'propuestas') {
+      setProposalLoading(false);
+      return;
+    }
+    setProposalLoading(true);
+    const timeout = window.setTimeout(() => setProposalLoading(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [activeSection]);
 
   async function load() {
     try {
       setLoading(true);
       setError(null);
+      await refreshAcceptedProposalUnits();
       const { tablas } = await cargarTablasFormulario();
       setBaseClues(tablas.baseClues);
       setBaseMeta(tablas.baseMeta);
@@ -271,7 +361,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header />
+      <Header
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        onLogoDoubleClick={() => {
+          setAdminPanelOpen(true);
+          setAdminError('');
+        }}
+      />
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
         {loading ? (
@@ -279,7 +376,21 @@ export default function App() {
         ) : error ? (
           <div className="card border-imss-wine/30 bg-imss-wine/5 p-8 text-imss-wine">Error: {error}</div>
         ) : (
-          <StatCards stats={stats} internetPie={internetPie} porEntidad={porEntidad} topFaltantes={topFaltantes} cluesGeo={cluesGeo} resultado={resultado} />
+          activeSection === 'mapa' ? (
+            <StatCards stats={stats} internetPie={internetPie} porEntidad={porEntidad} topFaltantes={topFaltantes} cluesGeo={cluesGeo} resultado={resultado} />
+          ) : proposalLoading ? (
+            <div className="proposal-loading-screen" role="status" aria-label="Cargando formulario">
+              <div className="proposal-loading-pin" />
+              <div className="proposal-loading-pulse" />
+            </div>
+          ) : (
+            <ProposalSection
+              cluesGeo={cluesGeo}
+              adminEnabled={adminEnabled}
+              adminPassword={adminPassword}
+              onOptionsUpdated={refreshAcceptedProposalUnits}
+            />
+          )
         )}
       </main>
 
@@ -290,6 +401,42 @@ export default function App() {
           </p>
         </div>
       </footer>
+
+      {adminPanelOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <section role="dialog" aria-modal="true" aria-labelledby="admin-panel-title" className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <h2 id="admin-panel-title" className="text-lg font-bold text-gray-900">Acceso de administrador</h2>
+              <button type="button" onClick={closeAdminPanel} className="rounded px-2 py-1 text-sm text-gray-500 hover:bg-gray-100">Cerrar</button>
+            </div>
+            {adminEnabled ? (
+              <div className="space-y-4">
+                <p role="status" className="text-sm text-emerald-800">Acceso activo. Ya puedes eliminar puntos guardados.</p>
+                <button type="button" onClick={closeAdminPanel} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cerrar sesión de administrador</button>
+              </div>
+            ) : (
+              <form onSubmit={verifyAdminPassword} className="space-y-4">
+                <label className="block text-sm font-medium text-gray-700">
+                  Contraseña
+                  <input
+                    type="password"
+                    value={adminPassword}
+                    onChange={(event) => setAdminPassword(event.target.value)}
+                    autoComplete="current-password"
+                    required
+                    className="mt-1.5 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-imss-green focus:ring-2 focus:ring-imss-green/20"
+                  />
+                </label>
+                <p className="text-xs text-gray-500">Configura `ADMIN_PASSWORD` en Apps Script &gt; Configuración del proyecto &gt; Propiedades de secuencia de comandos.</p>
+                {adminError && <p role="alert" className="text-sm text-red-700">{adminError}</p>}
+                <button type="submit" disabled={adminLoading} className="w-full rounded-md bg-imss-green px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-60">
+                  {adminLoading ? 'Verificando...' : 'Entrar'}
+                </button>
+              </form>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
